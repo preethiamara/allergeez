@@ -23,6 +23,8 @@ const PATHS: Record<string, ReactNode> = {
   // Additions in the same style for features the design doesn't cover
   speaker: <><path d="M4 9v6h4l5 4V5L8 9z" /><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /></>,
   message: <path d="M4 5h16v11H9l-5 4z" />,
+  flip: <><path d="M4 12a8 8 0 0 1 13.7-5.7L20 8" /><path d="M20 4v4h-4" /><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16" /><path d="M4 20v-4h4" /></>,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></>,
 };
 
 export type IconName = keyof typeof PATHS;

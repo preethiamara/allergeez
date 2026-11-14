@@ -370,3 +370,74 @@ h1{font-size:27px}
 .guide-announce{background:var(--ink)}
 .guide-announce:hover{background:#3b2830}
 .guide-toggle{display:flex;align-items:center;gap:8px;margin-top:14px;color:var(--muted);font-size:12px}
+
+/* ---------- In-app camera ---------- */
+.camera{position:absolute;inset:0;z-index:30;background:#1d1417;color:#fff;overflow:hidden;animation:.2s ease-out enter}
+.camera__video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.camera__video.is-mirrored{transform:scaleX(-1)}
+.camera__flash{position:absolute;inset:0;background:#fff;opacity:.85;animation:.18s ease-out camera-flash}
+@keyframes camera-flash{to{opacity:0}}
+.camera__top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:12px;padding:22px 20px;background:linear-gradient(#000a,#0000);font:700 13px Nunito,sans-serif}
+.camera__round{display:grid;place-items:center;width:46px;height:46px;flex:none;border:0;border-radius:50%;color:#fff;background:#ffffff2e;backdrop-filter:blur(8px);cursor:pointer}
+.camera__round:disabled{opacity:.35;cursor:default}
+.camera__frame{position:absolute;left:12%;right:12%;top:24%;bottom:28%;border:2px solid #ffffffb3;border-radius:26px;box-shadow:0 0 0 999px #0000002e;pointer-events:none}
+.camera__status{position:absolute;top:46%;left:0;right:0;text-align:center;font:700 14px Nunito,sans-serif;opacity:.85}
+.camera__bottom{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:space-around;padding:26px 24px 34px;background:linear-gradient(#0000,#000b)}
+.camera__shutter{display:grid;place-items:center;width:78px;height:78px;border:4px solid #fff;border-radius:50%;background:#0000;cursor:pointer}
+.camera__shutter span{width:60px;height:60px;border-radius:50%;background:#fff;transition:transform .12s}
+.camera__shutter:active span{transform:scale(.9)}
+.camera__shutter:disabled{opacity:.4;cursor:default}
+.camera__error{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:34px;text-align:center;background:var(--cream);color:var(--ink)}
+.camera__error svg{color:#b65070}
+.camera__error p{font-size:14px;line-height:1.5;color:var(--muted);margin-bottom:6px}
+
+/* ---------- Packaged food lookup ---------- */
+.food-lookup{display:grid;gap:11px;margin-top:14px;background:#fff;border:1px solid #eedde2;border-radius:22px;padding:17px;box-shadow:0 8px 25px #5130390b}
+.food-lookup__head{display:grid;gap:3px}
+.food-lookup__head strong{font:800 15px Nunito,sans-serif}
+.food-lookup__head small,.food-lookup__status{color:var(--muted);font-size:12px;line-height:1.45}
+.food-lookup__added span{text-transform:none}
+.food-lookup__credit{color:#b3a4a8;font-size:10px;text-align:right}
+.food-results{list-style:none;display:grid;gap:8px}
+.food-results li{border:1px solid #f0e4e7;border-radius:16px;overflow:hidden;background:#fffcfa}
+.food-results li.is-open{border-color:#f0c6d2;background:#fff}
+.food-results__row{display:flex;align-items:center;gap:11px;width:100%;padding:9px 11px;border:0;background:0 0;text-align:left;color:var(--ink);cursor:pointer}
+.food-results__row img,.food-results__thumb{width:42px;height:42px;flex:none;border-radius:11px;object-fit:contain;background:#f6efec}
+.food-results__thumb{display:grid;place-items:center;color:#b5a2a7}
+.food-results__copy{flex:1;min-width:0;display:grid}
+.food-results__copy strong{font:800 13px Nunito,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.food-results__copy small{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.food-results__warn{color:var(--red);display:grid}
+.food-results li.is-open .food-results__row>svg:last-child{transform:rotate(90deg)}
+.food-results__detail{display:grid;gap:11px;padding:0 12px 12px}
+.food-results__detail .primary-button,.food-results__detail .secondary-button{min-height:44px;margin:0}
+
+.nutrition{display:grid;gap:9px}
+.nutrition__head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:3px solid var(--ink);padding-bottom:5px}
+.nutrition__head strong{font:800 14px Nunito,sans-serif}
+.nutrition__head small{color:var(--muted);font-size:10px}
+.nutrition dl{display:grid}
+.nutrition dl div{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f0e6e3;font-size:12px}
+.nutrition dt{color:#6d5a60}
+.nutrition dd{font-weight:800}
+.nutrition dl div:first-child{font-size:14px}
+.nutrition .possible-tags{padding-top:2px}
+.nutrition__none{color:var(--muted);font-size:11px;line-height:1.45}
+
+.food-review-card{display:grid;gap:11px;background:#fff;border:1px solid #eedde2;border-radius:22px;padding:16px;margin-bottom:13px}
+.food-review-card__top{display:flex;align-items:center;gap:11px}
+.food-review-card__top img{width:46px;height:46px;border-radius:12px;object-fit:contain;background:#f6efec}
+.food-review-card__top div{display:grid}
+.food-review-card__top strong{font:800 14px Nunito,sans-serif}
+.food-review-card__top small{color:var(--muted);font-size:11px}
+
+/* Photo → product match */
+.photo-match{display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:11px 13px;border-radius:15px;background:#f3f7ee;color:#4e6a43;font-size:12px;line-height:1.4}
+.photo-match svg{flex:none}
+.photo-match strong{font-weight:800}
+.photo-match__alts{display:grid;gap:7px;margin:-2px 0 14px}
+.photo-match__alts small{color:var(--muted);font-size:11px}
+.match-chips{display:grid;gap:6px}
+.match-chips button{display:block;width:100%;text-align:left;border:1px solid #efd9df;border-radius:13px;background:#fff;color:#7a5560;padding:9px 12px;font-size:12px;font-weight:700;line-height:1.35;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.match-chips button.is-on{background:var(--pink-soft);border-color:#f0c6d2;color:#9c5c70}
+.photo-match.is-miss{background:#fbf0e6;color:#8a5a2b}
