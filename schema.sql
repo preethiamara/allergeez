@@ -28,3 +28,11 @@ create table if not exists meals (
 );
 create index if not exists meals_user_created on meals (user_id, created_at desc);
 create index if not exists reactions_user_created on reactions (user_id, created_at desc);
+
+-- Cache of packaged-food lookups (Open Food Facts via Bright Data)
+create table if not exists food_lookups (
+  query text primary key,
+  results jsonb not null,
+  source text not null,
+  created_at timestamptz default now()
+);

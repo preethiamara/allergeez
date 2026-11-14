@@ -3,15 +3,43 @@ import { useMemo, useRef, useState } from "react";
 import type { Meal, Profile, Reaction } from "@/lib/records";
 import { AppHeader, Buddy, Icon } from "./ui";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
+import CameraCapture from "./CameraCapture";
+import type { FoodProduct, Nutrients } from "@/lib/nutrition";
+import { allergenMatches } from "@/lib/allergens";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
   | "gee-voice" | "reaction-form" | "reaction-review" | "reaction-history" | "emergency-guide";
 
+type NutritionEstimate = { portion?: string; kcal?: number; protein?: number; carbs?: number; fat?: number; sugars?: number; fiber?: number; sodiumMg?: number };
 type ScanResult = {
+  kind?: "packaged" | "label" | "menu" | "homemade" | "restaurant" | "not_food";
   name?: string; ingredients?: string[]; flags?: { ingredient: string; allergen: string; reason: string }[];
+  product?: { brand?: string; name?: string } | null; barcode?: string;
+  nutrition_estimate?: NutritionEstimate | null;
   common_allergens?: string[]; safe?: boolean; note?: string;
 };
+
+function EstimateCard({ est, title }: { est: NutritionEstimate; title: string }) {
+  const rows: [keyof NutritionEstimate, string, string][] = [
+    ["kcal", "Calories", ""], ["protein", "Protein", "g"], ["carbs", "Carbohydrates", "g"], ["sugars", "Sugars", "g"],
+    ["fat", "Fat", "g"], ["fiber", "Fiber", "g"], ["sodiumMg", "Sodium", "mg"],
+  ];
+  const shown = rows.filter(([k]) => typeof est[k] === "number");
+  if (!shown.length) return null;
+  return (
+    <div className="food-review-card">
+      <div className="food-review-card__top">
+        <span className="food-results__thumb"><Icon name="spark" size={18} /></span>
+        <div><strong>{title}</strong><small>Gee’s estimate{est.portion ? ` · ${est.portion}` : ""}</small></div>
+      </div>
+      <div className="nutrition">
+        <div className="nutrition__head"><strong>Estimated nutrition</strong><small>approximate</small></div>
+        <dl>{shown.map(([k, label, unit]) => <div key={k}><dt>{label}</dt><dd>{Math.round(est[k] as number)}{unit && ` ${unit}`}</dd></div>)}</dl>
+      </div>
+    </div>
+  );
+}
 
 const SYMPTOMS = ["Itching", "Hives", "Swelling", "Stomach pain", "Nausea"];
 const DURATIONS = ["Less than 15 minutes", "15–30 minutes", "30–60 minutes", "1–3 hours", "More than 3 hours", "Still happening"];
@@ -58,6 +86,35 @@ async function prepareImage(file: File): Promise<{ data: string; mimeType: strin
   }
 }
 
+const NUTRIENT_ROWS: [keyof Nutrients, string, string][] = [
+  ["kcal", "Calories", ""], ["fat", "Fat", "g"], ["satFat", "Saturated fat", "g"], ["carbs", "Carbohydrates", "g"],
+  ["sugars", "Sugars", "g"], ["fiber", "Fiber", "g"], ["protein", "Protein", "g"], ["sodiumMg", "Sodium", "mg"],
+];
+
+function NutritionFacts({ food, allergens }: { food: FoodProduct; allergens: string[] }) {
+  const useServing = !!food.perServing?.kcal;
+  const n = (useServing ? food.perServing : food.per100g) ?? {};
+  const rows = NUTRIENT_ROWS.filter(([k]) => n[k] !== undefined);
+  const mine = food.allergens.filter(a => allergens.some(p => allergenMatches(p, a)));
+  return (
+    <div className="nutrition">
+      {rows.length > 0 ? (
+        <>
+          <div className="nutrition__head"><strong>Nutrition facts</strong><small>{useServing ? `per serving${food.servingSize ? ` (${food.servingSize})` : ""}` : "per 100 g"}</small></div>
+          <dl>{rows.map(([k, label, unit]) => <div key={k}><dt>{label}</dt><dd>{n[k]}{unit && ` ${unit}`}</dd></div>)}</dl>
+        </>
+      ) : <p className="nutrition__none">No nutrition facts listed for this product.</p>}
+      {(food.allergens.length > 0 || food.traces.length > 0) && (
+        <div className="possible-tags">
+          {food.allergens.map(a => <span key={a} className={mine.includes(a) ? "tag-alert" : ""}>{mine.includes(a) ? "Your allergen: " : "Contains: "}{a}</span>)}
+          {food.traces.map(a => <span key={`t-${a}`}>May contain: {a}</span>)}
+        </div>
+      )}
+      {food.allergens.length === 0 && <p className="nutrition__none">No allergens listed by the database. Gee will still check the ingredients.</p>}
+    </div>
+  );
+}
+
 export default function AllerGeezApp({ initialMeals, initialReactions, initialProfile, loadError }: {
   initialMeals: Meal[]; initialReactions: Reaction[]; initialProfile: Profile; loadError?: string;
 }) {
@@ -82,6 +139,13 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
   // meal flow
   const [desc, setDesc] = useState("");
   const [photo, setPhoto] = useState<string>();
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [foodQuery, setFoodQuery] = useState("");
+  const [foodSearch, setFoodSearch] = useState<{ loading: boolean; products?: FoodProduct[]; error?: string; query?: string }>({ loading: false });
+  const [openFood, setOpenFood] = useState<string>();
+  const [selectedFoods, setSelectedFoods] = useState<FoodProduct[]>([]);
+  // Product matched from a photo (Gemini reads brand/barcode → Bright Data looks it up)
+  const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string } | null>(null);
   const [scan, setScan] = useState<{ loading: boolean; result?: ScanResult; error?: string }>({ loading: false });
   const scanSeq = useRef(0);
   const libraryInput = useRef<HTMLInputElement>(null);
@@ -116,39 +180,97 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
       if (id !== scanSeq.current) return;
       setScan({ loading: false, result });
       if (input.image && !desc.trim() && result.ingredients?.length) setDesc(result.ingredients.join(", "));
+      if (input.image && (result.kind === "packaged" || result.kind === "label") && (result.barcode || result.product?.name || result.product?.brand)) {
+        matchProductFromPhoto(result, id);
+      }
     } catch (e: any) {
       if (id === scanSeq.current) setScan({ loading: false, error: e?.message ?? "Gee couldn't read that" });
     }
   }
   const lastScanInput = useRef<Parameters<typeof runScan>[0]>({});
 
+  async function matchProductFromPhoto(result: ScanResult, scanId: number) {
+    const brand = result.product?.brand ?? "", name = result.product?.name ?? result.name ?? "";
+    const label = [brand, name].filter(Boolean).join(" ") || result.barcode || "this product";
+    setPhotoMatch({ loading: true, label });
+    try {
+      const params = new URLSearchParams({ barcode: result.barcode ?? "", brand, name });
+      const r = await jsonFetch(`/api/nutrition?${params}`);
+      if (scanId !== scanSeq.current) return;
+      const products: FoodProduct[] = r.products ?? [];
+      const exact = r.exact !== false && products.length > 0;
+      setPhotoMatch({ loading: false, products, exact, label });
+      // Only auto-pick when it's the same brand; otherwise the user chooses from suggestions
+      if (exact) setSelectedFoods([products[0]]);
+    } catch (e: any) {
+      if (scanId === scanSeq.current) setPhotoMatch({ loading: false, products: [], label, error: e.message });
+    }
+  }
+
   async function onMealPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; e.target.value = "";
-    if (!file) return;
-    setDesc(""); setScan({ loading: true }); go("review");
+    if (file) handleMealFile(file);
+  }
+
+  async function handleMealFile(file: File) {
+    setCameraOpen(false);
+    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setScan({ loading: true }); go("review");
     const image = await prepareImage(file);
     setPhoto(`data:${image.mimeType};base64,${image.data}`);
     lastScanInput.current = { image };
     runScan({ image });
   }
 
+  // Searches only on submit (not per keystroke) to save Bright Data requests; results are cached server-side.
+  async function lookUpFood() {
+    const q = foodQuery.trim();
+    if (q.length < 2) return;
+    setFoodSearch({ loading: true, query: q }); setOpenFood(undefined);
+    try {
+      const r = await jsonFetch(`/api/nutrition?q=${encodeURIComponent(q)}`);
+      setFoodSearch({ loading: false, products: r.products, query: q });
+      if (r.products?.length) setOpenFood(r.products[0].code + r.products[0].name);
+    } catch (e: any) { setFoodSearch({ loading: false, error: e.message, query: q }); }
+  }
+  const foodKey = (f: FoodProduct) => f.code + f.name;
+  const toggleFood = (f: FoodProduct) =>
+    setSelectedFoods(list => list.some(x => foodKey(x) === foodKey(f)) ? list.filter(x => foodKey(x) !== foodKey(f)) : [...list, f]);
+
+  const describeForAI = () => [
+    desc.trim(),
+    ...selectedFoods.map(f => `Packaged food: ${f.name}${f.brand ? ` (${f.brand})` : ""}.` +
+      (f.ingredients ? ` Ingredients: ${f.ingredients}` : "") +
+      (f.allergens.length ? ` Listed allergens: ${f.allergens.join(", ")}.` : "") +
+      (f.traces.length ? ` May contain: ${f.traces.join(", ")}.` : "")),
+  ].filter(Boolean).join("\n");
+
   function reviewDescription() {
-    setPhoto(undefined);
-    lastScanInput.current = { text: desc };
+    setPhoto(undefined); setPhotoMatch(null);
+    const text = describeForAI();
+    lastScanInput.current = { text };
     go("review");
-    runScan({ text: desc });
+    runScan({ text });
   }
 
   const mealFlags = useMemo(() => {
     const r = scan.result;
-    const mine = [...new Set((r?.flags ?? []).map(f => f.allergen.toLowerCase()))];
-    const common = [...new Set((r?.common_allergens ?? []).map(a => a.toLowerCase()))].filter(a => !mine.includes(a));
-    return { mine, common };
-  }, [scan.result]);
+    const fromFoods = selectedFoods.flatMap(f => [...f.allergens, ...f.traces]).map(a => a.toLowerCase());
+    const mine = [...new Set([
+      ...(r?.flags ?? []).map(f => f.allergen.toLowerCase()),
+      ...fromFoods.filter(a => allergens.some(p => allergenMatches(p, a))),
+    ])];
+    // Merge near-duplicates from Gemini vs the food database ("tree nut"/"tree nuts", "dairy"/"milk")
+    const dedupe = (list: string[], against: string[] = []) => list.reduce<string[]>(
+      (out, a) => (out.some(b => allergenMatches(a, b)) || against.some(b => allergenMatches(a, b)) ? out : [...out, a]), []);
+    const mineUnique = dedupe(mine);
+    const common = dedupe([...(r?.common_allergens ?? []).map(a => a.toLowerCase()), ...fromFoods], mineUnique);
+    return { mine: mineUnique, common };
+  }, [scan.result, selectedFoods, allergens]);
 
   async function saveMeal() {
     setSaveError("");
-    const details = desc.trim() || "Food photo";
+    const foodNames = selectedFoods.map(f => f.brand && !f.name.toLowerCase().includes(f.brand.split(",")[0].toLowerCase()) ? `${f.brand.split(",")[0]} ${f.name}` : f.name);
+    const details = [desc.trim(), ...foodNames].filter(Boolean).join(", ") || "Food photo";
     const fallback = details.split(/[,.\n]/)[0].trim();
     try {
       const meal: Meal = await jsonFetch("/api/meals", {
@@ -161,7 +283,11 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
     } catch (e: any) { setSaveError(e.message); }
   }
 
-  const resetMeal = () => { setDesc(""); setPhoto(undefined); setScan({ loading: false }); go("home"); };
+  const resetMeal = () => {
+    setDesc(""); setPhoto(undefined); setScan({ loading: false });
+    setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null);
+    go("home");
+  };
 
   async function deleteMeal(id: number) {
     try { await jsonFetch(`/api/meals?id=${id}`, { method: "DELETE" }); setMeals(m => m.filter(x => x.id !== id)); }
@@ -326,7 +452,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                 <span><strong>Choose a photo</strong><small>Pick one from your library</small></span>
                 <Icon name="chevron" size={20} />
               </button>
-              <button onClick={() => cameraInput.current?.click()}>
+              <button onClick={() => setCameraOpen(true)}>
                 <span className="option-icon option-icon--peach"><Icon name="camera" size={27} /></span>
                 <span><strong>Take a photo</strong><small>Snap your meal or a label now</small></span>
                 <Icon name="chevron" size={20} />
@@ -364,11 +490,64 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                 placeholder="For example: I had a chicken wrap with hummus, lettuce, pickles and a creamy sauce..." />
               <span className="text-card__hint">{desc.length} characters</span>
             </div>
+
+            <section className="food-lookup" aria-label="Look up a packaged food">
+              <div className="food-lookup__head">
+                <strong>Had something packaged?</strong>
+                <small>Look up a brand to get its nutrition facts and listed allergens.</small>
+              </div>
+              <form className="inline-add" onSubmit={e => { e.preventDefault(); lookUpFood(); }}>
+                <input value={foodQuery} onChange={e => setFoodQuery(e.target.value)} placeholder="Brand or product name" aria-label="Brand or product name" />
+                <button type="submit" disabled={foodQuery.trim().length < 2 || foodSearch.loading} aria-label="Look up">
+                  <Icon name="search" size={18} strokeWidth={2.2} />
+                </button>
+              </form>
+
+              {selectedFoods.length > 0 && (
+                <div className="allergen-chips food-lookup__added">
+                  {selectedFoods.map(f => (
+                    <span key={foodKey(f)}>{f.name}<button onClick={() => toggleFood(f)} aria-label={`Remove ${f.name}`}><Icon name="close" size={13} strokeWidth={2.2} /></button></span>
+                  ))}
+                </div>
+              )}
+
+              {foodSearch.loading && <p className="food-lookup__status">Searching the food database…</p>}
+              {foodSearch.error && <p className="save-error">{foodSearch.error}</p>}
+              {foodSearch.products && foodSearch.products.length === 0 && <p className="food-lookup__status">No products found for “{foodSearch.query}”. Try the brand plus product, like “Kind almond bar”.</p>}
+              {foodSearch.products && foodSearch.products.length > 0 && (
+                <ul className="food-results">
+                  {foodSearch.products.map(f => {
+                    const k = foodKey(f), open = openFood === k, added = selectedFoods.some(x => foodKey(x) === k);
+                    const risky = f.allergens.some(a => allergens.some(p => allergenMatches(p, a)));
+                    return (
+                      <li key={k} className={open ? "is-open" : ""}>
+                        <button className="food-results__row" onClick={() => setOpenFood(open ? undefined : k)} aria-expanded={open}>
+                          {f.image ? <img src={f.image} alt="" /> : <span className="food-results__thumb"><Icon name="image" size={18} /></span>}
+                          <span className="food-results__copy"><strong>{f.name}</strong><small>{[f.brand, f.per100g.kcal !== undefined && `${f.per100g.kcal} kcal/100 g`].filter(Boolean).join(" · ")}</small></span>
+                          {risky && <span className="food-results__warn" title="Contains one of your allergens"><Icon name="alert" size={16} /></span>}
+                          <Icon name="chevron" size={18} />
+                        </button>
+                        {open && (
+                          <div className="food-results__detail">
+                            <NutritionFacts food={f} allergens={allergens} />
+                            <button className={added ? "secondary-button" : "primary-button"} onClick={() => toggleFood(f)}>
+                              {added ? "Remove from meal" : <><Icon name="plus" size={18} /> Add to my meal</>}
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <small className="food-lookup__credit">Food data from Open Food Facts</small>
+            </section>
+
             <div className="prompt-card">
               <Buddy small />
               <p><strong>Not sure what to include?</strong><br />Think about toppings, drinks, snacks, and sauces too.</p>
             </div>
-            <button className="primary-button" disabled={!desc.trim()} onClick={reviewDescription}>
+            <button className="primary-button" disabled={!desc.trim() && selectedFoods.length === 0} onClick={reviewDescription}>
               Review with my AI buddy <Icon name="arrow" size={20} />
             </button>
           </div>
@@ -395,6 +574,39 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                   <p>You can make changes before adding this to your food history.</p>
                 </section>
                 {photo && <img className="meal-preview" src={photo} alt="The meal you selected" />}
+                {photoMatch && (
+                  <div className={`photo-match ${!photoMatch.loading && !photoMatch.exact ? "is-miss" : ""}`} aria-live="polite">
+                    <Icon name={photoMatch.loading ? "search" : photoMatch.exact ? "check" : "alert"} size={18} />
+                    <p>
+                      {photoMatch.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database…</>
+                        : photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</>
+                        : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database, so these notes come from the photo only.{photoMatch.products?.length ? " Tap a similar product below if it’s the same thing." : ""}</>}
+                    </p>
+                  </div>
+                )}
+                {selectedFoods.map(f => (
+                  <div className="food-review-card" key={foodKey(f)}>
+                    <div className="food-review-card__top">
+                      {f.image ? <img src={f.image} alt="" /> : <span className="food-results__thumb"><Icon name="image" size={18} /></span>}
+                      <div><strong>{f.name}</strong><small>{f.brand}</small></div>
+                    </div>
+                    <NutritionFacts food={f} allergens={allergens} />
+                  </div>
+                ))}
+                {photoMatch?.products && (photoMatch.exact ? photoMatch.products.length > 1 : photoMatch.products.length > 0) && (
+                  <div className="photo-match__alts">
+                    <small>{photoMatch.exact ? "Not the right one? Pick a closer match:" : "Similar products:"}</small>
+                    <div className="match-chips">
+                      {photoMatch.products.slice(0, 4).map(f => (
+                        <button key={foodKey(f)} className={selectedFoods.some(x => foodKey(x) === foodKey(f)) ? "is-on" : ""}
+                          onClick={() => setSelectedFoods([f])}>{f.name}{f.brand ? ` · ${f.brand.split(",")[0]}` : ""}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(scan.result?.kind === "homemade" || scan.result?.kind === "restaurant") && scan.result.nutrition_estimate && (
+                  <EstimateCard est={scan.result.nutrition_estimate} title={scan.result.name || (scan.result.kind === "homemade" ? "Homemade dish" : "Restaurant dish")} />
+                )}
                 {mealFlags.mine.length > 0 && (
                   <div className="severity-alert allergen-warning" role="alert">
                     <Icon name="alert" size={20} />
@@ -741,6 +953,11 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
 
         {screen === "emergency-guide" && (
           <Emergency contact={contact} trigger={lastTrigger} onExit={() => go("home")} />
+        )}
+
+        {cameraOpen && (
+          <CameraCapture onCapture={handleMealFile} onClose={() => setCameraOpen(false)}
+            onFallback={() => { setCameraOpen(false); cameraInput.current?.click(); }} />
         )}
 
         {emergencyOpen && (
