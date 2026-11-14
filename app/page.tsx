@@ -1,19 +1,18 @@
 "use client";
-import { useEffect, useState } from "react";
-
-const STEPS = [
-  "Stay calm. If you have an epinephrine auto-injector, use it now. Pull off the safety cap, press the orange tip firmly into your outer thigh, and hold for three seconds.",
-  "Call 911 right now, even if you feel better after the injection.",
-  "Lie down with your legs raised. If you are having trouble breathing, sit up instead.",
-  "Tell someone nearby what is happening. A second injection may be needed after five minutes.",
-];
+import { useEffect, useRef, useState } from "react";
+import Emergency, { unlockEmergencyAudio } from "./Emergency";
 
 export default function Home() {
   const [allergens, setAllergens] = useState("");
   const [contact, setContact] = useState({ name: "", phone: "" });
   const [result, setResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [mode, setMode] = useState<"scan" | "reaction">("scan");
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [camOn, setCamOn] = useState(false);
 
   useEffect(() => {
     fetch("/api/profile").then(r => r.json()).then(p => {
@@ -22,46 +21,81 @@ export default function Home() {
     }).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (camOn && videoRef.current && streamRef.current) videoRef.current.srcObject = streamRef.current;
+  }, [camOn]);
+
   const list = () => allergens.split(",").map(s => s.trim()).filter(Boolean);
   const post = (url: string, method: string, body: unknown) =>
     fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
   const save = () => post("/api/profile", "PUT", { allergens: list(), contact_name: contact.name, contact_phone: contact.phone });
 
+  // Phone photos are often 4-12 MB; shrink to a JPEG Gemini reads quickly. Falls back to the raw file.
+  async function prepareImage(file: File): Promise<{ data: string; mimeType: string }> {
+    const toB64 = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(b); });
+    try {
+      const bmp = await createImageBitmap(file);
+      const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+      c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+      const blob: Blob = await new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error("encode failed"))), "image/jpeg", 0.85));
+      return { data: await toB64(blob), mimeType: "image/jpeg" };
+    } catch {
+      return { data: await toB64(file), mimeType: file.type || "image/jpeg" };
+    }
+  }
+
   async function scan(file: File) {
-    setBusy(true); setResult(null);
-    const data = await new Promise<string>(res => { const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.readAsDataURL(file); });
-    const r = await post("/api/scan", "POST", { image: data, mimeType: file.type, allergens: list() });
-    setResult(await r.json()); setBusy(false);
+    setBusy(true); setResult(null); setError("");
+    try {
+      const { data, mimeType } = await prepareImage(file);
+      const r = await post("/api/scan", "POST", { image: data, mimeType, allergens: list() });
+      const json = await r.json().catch(() => ({ error: `Server returned ${r.status}` }));
+      if (!r.ok || json.error) throw new Error(json.error || `Scan failed (${r.status})`);
+      setResult(json);
+    } catch (e: any) {
+      setError(e?.message ?? "Scan failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function speak(text: string) {
-    const r = await post("/api/speak", "POST", { text });
-    new Audio(URL.createObjectURL(await r.blob())).play();
+  async function openCamera() {
+    try {
+      streamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      setCamOn(true);
+    } catch { alert("Camera unavailable. Allow camera access, or use the upload option."); }
   }
 
+  function closeCamera() {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setCamOn(false);
+  }
+
+  async function capture() {
+    const v = videoRef.current!;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext("2d")!.drawImage(v, 0, 0);
+    const blob: Blob = await new Promise(res => c.toBlob(b => res(b!), "image/jpeg", 0.85));
+    closeCamera();
+    scan(new File([blob], "capture.jpg", { type: "image/jpeg" }));
+  }
+
+  const trigger: string | undefined = result?.flags?.[0]?.allergen;
   const startReaction = () => {
+    unlockEmergencyAudio(); // must run inside the click so the browser allows audio
     setMode("reaction");
-    post("/api/profile", "POST", { suspected_trigger: "unknown" });
-    speak(STEPS.join(" "));
+    post("/api/profile", "POST", { suspected_trigger: trigger ?? "unknown" }).catch(() => {});
   };
 
   const box = { background: "#fff", border: "1px solid #ddd", borderRadius: 12, padding: 16, marginBottom: 16 } as const;
   const btn = { padding: "12px 18px", borderRadius: 10, border: 0, background: "#222", color: "#fff", fontSize: 16, cursor: "pointer" } as const;
-  const link = { ...btn, display: "block", textAlign: "center", textDecoration: "none", marginBottom: 8 } as const;
 
-  if (mode === "reaction") return (
-    <main style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ color: "#b00020" }}>Reaction mode</h1>
-      <a href="tel:911" style={{ ...link, background: "#b00020", fontSize: 24, padding: 24 }}>Call 911</a>
-      <ol style={{ fontSize: 18, lineHeight: 1.5 }}>{STEPS.map(s => <li key={s}>{s}</li>)}</ol>
-      {contact.phone && <a href={`sms:${contact.phone}?body=${encodeURIComponent("I may be having an allergic reaction. Please call me or come help.")}`} style={link}>Text {contact.name || "emergency contact"}</a>}
-      <a href="tel:18002221222" style={{ ...link, background: "#555" }}>Poison Control 1-800-222-1222</a>
-      <button style={btn} onClick={() => speak(STEPS.join(" "))}>Repeat instructions</button>{" "}
-      <button style={{ ...btn, background: "#999" }} onClick={() => setMode("scan")}>Back</button>
-      <p style={{ fontSize: 12, color: "#666" }}>Informational only. Not medical advice. In an emergency call 911.</p>
-    </main>
-  );
+  if (mode === "reaction") return <Emergency contact={contact} trigger={trigger} onExit={() => setMode("scan")} />;
 
   return (
     <main style={{ maxWidth: 560, margin: "0 auto", padding: 16 }}>
@@ -76,8 +110,21 @@ export default function Home() {
       </section>
       <section style={box}>
         <h3>Scan a label or menu</h3>
-        <input type="file" accept="image/*" capture="environment" onChange={e => e.target.files?.[0] && scan(e.target.files[0])} />
+        {camOn ? (
+          <div>
+            <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 10 }} />
+            <button style={btn} onClick={capture}>Take photo</button>{" "}
+            <button style={{ ...btn, background: "#999" }} onClick={closeCamera}>Cancel</button>
+          </div>
+        ) : (
+          <>
+            <button style={btn} onClick={openCamera}>Open camera</button>
+            <p style={{ margin: "8px 0 4px" }}>or upload a photo:</p>
+            <input type="file" accept="image/*" capture="environment" onChange={e => e.target.files?.[0] && scan(e.target.files[0])} />
+          </>
+        )}
         {busy && <p>Reading label...</p>}
+        {error && <p role="alert" style={{ color: "#b00020", background: "#fff0f0", padding: 10, borderRadius: 8 }}>{error}</p>}
         {result && (
           <div>
             <h2 style={{ color: result.safe ? "#1b7f3b" : "#b00020" }}>{result.safe ? "No flagged allergens found" : "Possible allergen risk"}</h2>
