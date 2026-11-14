@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppHeader, Icon } from "./ui";
 
 type Step = { title: string; body: string; say: string; needsChoice?: boolean };
 
@@ -189,75 +190,65 @@ export default function Emergency({ contact, trigger, onExit }: {
   const announce = () => speak(announcement);
 
   const s = STEPS[step];
-  const red = "#b00020";
-  const big = { display: "block", width: "100%", boxSizing: "border-box", textAlign: "center", textDecoration: "none", border: 0, borderRadius: 14, padding: "16px 18px", fontSize: 18, fontWeight: 600, cursor: "pointer", marginBottom: 10 } as const;
-  const ghost = { ...big, background: "#fff", color: "#222", border: "2px solid #ddd", marginBottom: 0, padding: "12px 10px", fontSize: 16 } as const;
-  const voiceLabel = muted ? "Voice off" : { idle: "Voice ready", loading: "Preparing voice…", elevenlabs: "Speaking", device: "Speaking (device voice)" }[voice];
+  const speaking = voice === "elevenlabs" || voice === "device";
+  const voiceLabel = muted ? "Voice off" : { idle: "Voice ready", loading: "Preparing voice…", elevenlabs: "Gee is speaking", device: "Speaking (device voice)" }[voice];
 
   return (
-    <main style={{ minHeight: "100vh", background: "#fff5f5", padding: 16, boxSizing: "border-box" }}>
-      <div style={{ maxWidth: 560, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h1 style={{ color: red, margin: 0, fontSize: 26 }}>Emergency</h1>
-          <span aria-live="polite" style={{ fontSize: 14, color: "#555", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 10, height: 10, borderRadius: 5, background: voice === "elevenlabs" || voice === "device" ? red : "#bbb", animation: voice === "elevenlabs" || voice === "device" ? "pulse 1s infinite" : "none" }} />
-            {voiceLabel}
-          </span>
-        </div>
+    <div className="screen guide-screen">
+      <AppHeader title="Emergency guide" onBack={() => { stop(); onExit(); }}
+        right={<a className="sos-mini" href="tel:911" aria-label="Call 911"><Icon name="phone" size={17} /></a>} />
 
-        <a href="tel:911" style={{ ...big, background: red, color: "#fff", fontSize: 28, padding: 24 }}>Call 911</a>
-
-        {epiAt && (
-          <div role="timer" style={{ background: remaining <= 0 ? red : "#fff", color: remaining <= 0 ? "#fff" : "#222", border: `2px solid ${red}`, borderRadius: 14, padding: 14, marginBottom: 10, textAlign: "center" }}>
-            <div style={{ fontSize: 14 }}>{remaining > 0 ? "Second dose may be needed in" : "5 minutes passed since first dose"}</div>
-            <div style={{ fontSize: 36, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{remaining > 0 ? fmt(remaining) : `+${fmt(-remaining)}`}</div>
-            {remaining <= 0 && <div style={{ fontSize: 15 }}>Not improving? Use a second auto-injector if you have one.</div>}
-          </div>
-        )}
-
-        <section aria-live="assertive" style={{ background: "#fff", border: `3px solid ${red}`, borderRadius: 16, padding: 20, marginBottom: 12 }}>
-          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-            {STEPS.map((_, i) => (
-              <button key={i} aria-label={`Step ${i + 1}`} onClick={() => setStep(i)}
-                style={{ flex: 1, height: 8, border: 0, borderRadius: 4, cursor: "pointer", background: i <= step ? red : "#eee" }} />
-            ))}
-          </div>
-          <div style={{ fontSize: 14, color: "#777" }}>Step {step + 1} of {STEPS.length}</div>
-          <h2 style={{ fontSize: 28, margin: "4px 0 8px", lineHeight: 1.2 }}>{s.title}</h2>
-          <p style={{ fontSize: 20, lineHeight: 1.45, margin: 0 }}>{s.body}</p>
-
-          {s.needsChoice && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 16 }}>
-              <button style={{ ...big, background: red, color: "#fff", marginBottom: 0 }} onClick={usedEpi}>I used it</button>
-              <button style={{ ...big, background: "#444", color: "#fff", marginBottom: 0 }} onClick={() => setStep(1)}>I don't have one</button>
-            </div>
-          )}
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 8, marginTop: 16 }}>
-            <button style={ghost} disabled={step === 0} onClick={() => setStep(step - 1)}>‹ Back</button>
-            <button style={{ ...ghost, borderColor: red, color: red }} onClick={() => speak(s.say)}>🔊 Repeat</button>
-            <button style={ghost} disabled={step === STEPS.length - 1} onClick={() => setStep(step + 1)}>Next ›</button>
-          </div>
-        </section>
-
-        <button style={{ ...big, background: "#222", color: "#fff" }} onClick={announce}>📢 Announce to people nearby</button>
-        {!epiAt && <button style={{ ...big, background: "#fff", color: red, border: `2px solid ${red}` }} onClick={() => { setEpiAt(Date.now()); setNow(Date.now()); }}>Start 5-minute epinephrine timer</button>}
-        {contact.phone && (
-          <a style={{ ...big, background: "#fff", color: "#222", border: "2px solid #ddd" }}
-            href={`sms:${contact.phone}?&body=${encodeURIComponent(`I'm having an allergic reaction${trigger ? ` (possibly ${trigger})` : ""}. Please call me or come help.`)}`}>
-            Text {contact.name || "emergency contact"}
-          </a>
-        )}
-        <a href="tel:18002221222" style={{ ...big, background: "#fff", color: "#222", border: "2px solid #ddd" }}>Poison Control 1-800-222-1222</a>
-
-        <div style={{ display: "flex", gap: 16, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", margin: "8px 0" }}>
-          <label style={{ fontSize: 15 }}><input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /> Hands-free (auto-advance)</label>
-          <label style={{ fontSize: 15 }}><input type="checkbox" checked={muted} onChange={e => { setMuted(e.target.checked); if (e.target.checked) stop(); }} /> Mute voice</label>
-          <button onClick={() => { stop(); onExit(); }} style={{ background: "none", border: 0, color: "#666", textDecoration: "underline", cursor: "pointer", fontSize: 15 }}>Exit</button>
-        </div>
-        <p style={{ fontSize: 12, color: "#666" }}>Informational only. Not medical advice. Always follow 911 dispatcher instructions.</p>
+      <div className="guide-status" aria-live="polite">
+        <span className={`guide-status__dot ${speaking ? "is-speaking" : ""}`} />
+        {voiceLabel}
+        <label><input type="checkbox" checked={muted} onChange={e => { setMuted(e.target.checked); if (e.target.checked) stop(); }} /> Mute</label>
       </div>
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}} button:disabled{opacity:.4;cursor:default}`}</style>
-    </main>
+
+      <a className="call-button guide-call" href="tel:911"><Icon name="phone" /> Call 911</a>
+
+      {epiAt && (
+        <div role="timer" className={`guide-timer ${remaining <= 0 ? "is-due" : ""}`}>
+          <small>{remaining > 0 ? "Second dose may be needed in" : "5 minutes since first dose"}</small>
+          <strong>{remaining > 0 ? fmt(remaining) : `+${fmt(-remaining)}`}</strong>
+          {remaining <= 0 && <p>Not improving? Use a second auto-injector if you have one.</p>}
+        </div>
+      )}
+
+      <section className="guide-step" aria-live="assertive">
+        <div className="guide-step__progress">
+          {STEPS.map((_, i) => (
+            <button key={i} aria-label={`Step ${i + 1}`} onClick={() => setStep(i)} className={i <= step ? "is-done" : ""} />
+          ))}
+        </div>
+        <p className="eyebrow">Step {step + 1} of {STEPS.length}</p>
+        <h2>{s.title}</h2>
+        <p className="guide-step__body">{s.body}</p>
+
+        {s.needsChoice && (
+          <div className="guide-step__choice">
+            <button className="call-button" onClick={usedEpi}><Icon name="check" size={20} /> I used it</button>
+            <button className="secondary-button" onClick={() => setStep(1)}>I don’t have one</button>
+          </div>
+        )}
+
+        <div className="guide-step__nav">
+          <button disabled={step === 0} onClick={() => setStep(step - 1)} aria-label="Previous step"><Icon name="back" size={20} /></button>
+          <button className="is-repeat" onClick={() => speak(s.say)}><Icon name="speaker" size={20} /> Repeat</button>
+          <button disabled={step === STEPS.length - 1} onClick={() => setStep(step + 1)} aria-label="Next step"><Icon name="arrow" size={20} /></button>
+        </div>
+      </section>
+
+      <button className="primary-button guide-announce" onClick={announce}><Icon name="speaker" size={20} /> Announce to people nearby</button>
+      {!epiAt && <button className="secondary-button" onClick={() => { setEpiAt(Date.now()); setNow(Date.now()); }}><Icon name="clock" size={19} /> Start 5-minute epinephrine timer</button>}
+      {contact.phone && (
+        <a className="secondary-button" href={`sms:${contact.phone}?&body=${encodeURIComponent(`I'm having an allergic reaction${trigger ? ` (possibly ${trigger})` : ""}. Please call me or come help.`)}`}>
+          <Icon name="message" size={19} /> Text {contact.name || "emergency contact"}
+        </a>
+      )}
+      <a className="secondary-button" href="tel:18002221222"><Icon name="phone" size={19} /> Poison Control 1-800-222-1222</a>
+
+      <label className="guide-toggle"><input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /> Hands-free: move to the next step automatically</label>
+      <p className="disclaimer">Informational only. Not medical advice. Always follow 911 dispatcher instructions.</p>
+    </div>
   );
 }

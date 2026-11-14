@@ -30,26 +30,30 @@ export async function POST(req: Request) {
     if (!key) return Response.json({ error: "GEMINI_API_KEY is missing in .env.local" }, { status: 500 });
     const ai = new GoogleGenAI({ apiKey: key });
 
-    const { image, mimeType, allergens } = await req.json();
-    if (!image) return Response.json({ error: "No image received" }, { status: 400 });
+    const { image, mimeType, text, allergens } = await req.json();
+    const description = typeof text === "string" ? text.trim().slice(0, 4000) : "";
+    if (!image && !description) return Response.json({ error: "Add a photo or describe your food" }, { status: 400 });
     const list: string[] = Array.isArray(allergens) ? allergens : [];
 
-    const prompt = `You read food ingredient labels and menus. The user is allergic to: ${list.join(", ") || "nothing listed"}.
-Extract all ingredients. Flag any matching the user's allergens, INCLUDING hidden names (casein, whey, albumin, tahini, lecithin, etc.) and "may contain" / cross-contact warnings.
-Return JSON only: {"ingredients": string[], "flags": [{"ingredient": string, "allergen": string, "reason": string}], "safe": boolean, "note": string}.
-If the image is not a food label or menu, or is unreadable, return empty ingredients, safe false, and explain in note.
-If unsure, set safe to false. Informational only, not medical advice.`;
+    const prompt = `You help someone with food allergies. You are given ${image ? "a photo (an ingredient label, a menu, or a meal)" : "a written description of a meal"}${image && description ? " plus the user's notes" : ""}.
+The user is allergic to: ${list.join(", ") || "nothing listed"}.
+List the likely ingredients (for a meal photo or description, include typical hidden ingredients like sauces, butter, flour, nuts in pesto).
+Flag any that match the user's allergens, INCLUDING hidden names (casein, whey, albumin, tahini, lecithin, etc.) and "may contain" / cross-contact warnings.
+Also list common major allergens the food likely contains even if the user did not list them, as "common_allergens" (lowercase words like "dairy", "wheat", "peanut", "egg", "soy", "sesame", "shellfish", "tree nut", "fish").
+Return JSON only: {"name": string (short meal name, max 5 words), "ingredients": string[], "flags": [{"ingredient": string, "allergen": string, "reason": string}], "common_allergens": string[], "safe": boolean, "note": string (one friendly sentence)}.
+If the input is not food or is unreadable, return empty lists, safe false, and explain in note.
+If unsure, set safe to false. Informational only, not medical advice.${description ? `\n\nUser's description: """${description}"""` : ""}`;
 
     let lastErr: any;
     for (const model of MODELS) {
       try {
         const res = await withTimeout(ai.models.generateContent({
           model,
-          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mimeType || "image/jpeg", data: image } }, { text: prompt }] }],
+          contents: [{ role: "user", parts: image ? [{ inlineData: { mimeType: mimeType || "image/jpeg", data: image } }, { text: prompt }] : [{ text: prompt }] }],
           config: { responseMimeType: "application/json" },
         }), ATTEMPT_TIMEOUT_MS);
         const out = parseJson(res.text ?? "{}");
-        return Response.json({ ingredients: [], flags: [], safe: false, note: "", ...out, model });
+        return Response.json({ name: "", ingredients: [], flags: [], common_allergens: [], safe: false, note: "", ...out, model });
       } catch (e: any) {
         lastErr = e;
         const msg = String(e?.message ?? e);

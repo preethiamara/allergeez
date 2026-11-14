@@ -4,9 +4,27 @@ create table if not exists profiles (
   contact_name text,
   contact_phone text
 );
+
 create table if not exists reactions (
   id serial primary key,
   user_id text not null,
   suspected_trigger text,
   created_at timestamptz default now()
 );
+-- Reaction check-in details (safe to re-run)
+alter table reactions add column if not exists symptoms text;
+alter table reactions add column if not exists severity int;
+alter table reactions add column if not exists duration text;
+alter table reactions add column if not exists meal_name text;
+alter table reactions add column if not exists occurred_at timestamptz;
+
+create table if not exists meals (
+  id serial primary key,
+  user_id text not null,
+  name text not null,
+  details text not null default '',
+  flags text[] not null default '{}',
+  created_at timestamptz default now()
+);
+create index if not exists meals_user_created on meals (user_id, created_at desc);
+create index if not exists reactions_user_created on reactions (user_id, created_at desc);
