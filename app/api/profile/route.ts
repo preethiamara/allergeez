@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-const ID = "demo"; // single demo user; add auth later
+import { USER_ID as ID } from "@/lib/records";
 
 const fail = (e: any, what: string) => {
   console.error(`[profile] ${what}`, e);
@@ -29,10 +29,3 @@ export async function PUT(req: Request) {
   } catch (e) { return fail(e, "Saving profile"); }
 }
 
-export async function POST(req: Request) {
-  try {
-    const { suspected_trigger } = await req.json();
-    await sql`insert into reactions (user_id, suspected_trigger) values (${ID}, ${suspected_trigger ?? "unknown"})`;
-    return Response.json({ ok: true });
-  } catch (e) { return fail(e, "Logging reaction"); }
-}
