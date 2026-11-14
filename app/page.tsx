@@ -14,11 +14,21 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null);
   const [camOn, setCamOn] = useState(false);
 
+  const [profileState, setProfileState] = useState<"loading" | "ready" | "saving" | "saved" | "error">("loading");
+  const [profileMsg, setProfileMsg] = useState("");
+  const edited = useRef(false); // don't let a slow initial load overwrite what the user typed
+
   useEffect(() => {
-    fetch("/api/profile").then(r => r.json()).then(p => {
-      setAllergens((p.allergens ?? []).join(", "));
-      setContact({ name: p.contact_name ?? "", phone: p.contact_phone ?? "" });
-    }).catch(() => {});
+    fetch("/api/profile")
+      .then(async r => { const p = await r.json(); if (!r.ok || p.error) throw new Error(p.error || `Load failed (${r.status})`); return p; })
+      .then(p => {
+        if (!edited.current) {
+          setAllergens((p.allergens ?? []).join(", "));
+          setContact({ name: p.contact_name ?? "", phone: p.contact_phone ?? "" });
+        }
+        setProfileState("ready");
+      })
+      .catch(e => { setProfileState("error"); setProfileMsg(`Couldn't load your saved profile: ${e.message}`); });
   }, []);
 
   useEffect(() => {
@@ -29,7 +39,20 @@ export default function Home() {
   const post = (url: string, method: string, body: unknown) =>
     fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
-  const save = () => post("/api/profile", "PUT", { allergens: list(), contact_name: contact.name, contact_phone: contact.phone });
+  async function save() {
+    setProfileState("saving"); setProfileMsg("");
+    try {
+      const r = await post("/api/profile", "PUT", { allergens: list(), contact_name: contact.name.trim(), contact_phone: contact.phone.trim() });
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok || json.error) throw new Error(json.error || `Save failed (${r.status})`);
+      setAllergens((json.allergens ?? list()).join(", ")); // show the cleaned-up list the server stored
+      edited.current = false;
+      setProfileState("saved");
+    } catch (e: any) {
+      setProfileState("error"); setProfileMsg(`Not saved: ${e?.message ?? "unknown error"}`);
+    }
+  }
+  const onEdit = () => { edited.current = true; if (profileState === "saved") setProfileState("ready"); };
 
   // Phone photos are often 4-12 MB; shrink to a JPEG Gemini reads quickly. Falls back to the raw file.
   async function prepareImage(file: File): Promise<{ data: string; mimeType: string }> {
@@ -103,10 +126,19 @@ export default function Home() {
       <button onClick={startReaction} style={{ ...btn, background: "#b00020", width: "100%", fontSize: 20, padding: 20, marginBottom: 16 }}>I'm having a reaction</button>
       <section style={box}>
         <h3>My allergies</h3>
-        <input style={{ width: "100%", padding: 8 }} placeholder="peanuts, milk, shellfish" value={allergens} onChange={e => setAllergens(e.target.value)} />
-        <input style={{ width: "100%", padding: 8, marginTop: 8 }} placeholder="Emergency contact name" value={contact.name} onChange={e => setContact({ ...contact, name: e.target.value })} />
-        <input style={{ width: "100%", padding: 8, marginTop: 8 }} placeholder="Emergency contact phone" value={contact.phone} onChange={e => setContact({ ...contact, phone: e.target.value })} />
-        <button style={{ ...btn, marginTop: 8 }} onClick={save}>Save</button>
+        <form onSubmit={e => { e.preventDefault(); save(); }}>
+          <input style={{ width: "100%", padding: 8, boxSizing: "border-box" }} placeholder={profileState === "loading" ? "Loading saved allergies…" : "peanuts, milk, shellfish"} value={allergens} onChange={e => { onEdit(); setAllergens(e.target.value); }} />
+          <input style={{ width: "100%", padding: 8, marginTop: 8, boxSizing: "border-box" }} placeholder="Emergency contact name" value={contact.name} onChange={e => { onEdit(); setContact({ ...contact, name: e.target.value }); }} />
+          <input style={{ width: "100%", padding: 8, marginTop: 8, boxSizing: "border-box" }} type="tel" placeholder="Emergency contact phone" value={contact.phone} onChange={e => { onEdit(); setContact({ ...contact, phone: e.target.value }); }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+            <button type="submit" style={{ ...btn, opacity: profileState === "saving" ? 0.6 : 1 }} disabled={profileState === "saving"}>
+              {profileState === "saving" ? "Saving…" : "Save"}
+            </button>
+            <span role="status" style={{ fontSize: 14, color: profileState === "error" ? "#b00020" : "#1b7f3b" }}>
+              {profileState === "saved" ? "✓ Saved" : profileState === "error" ? profileMsg : ""}
+            </span>
+          </div>
+        </form>
       </section>
       <section style={box}>
         <h3>Scan a label or menu</h3>
