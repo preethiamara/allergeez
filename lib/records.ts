@@ -1,8 +1,7 @@
 import { sql } from "@/lib/db";
 
-export const USER_ID = "demo"; // single demo user; add auth later
-
-export type Meal = { id: number; name: string; details: string; flags: string[]; createdAt: string };
+export type Ingredient = { name: string; flagged: boolean };
+export type Meal = { id: number; name: string; details: string; flags: string[]; ingredients: Ingredient[]; createdAt: string };
 export type Reaction = {
   id: number; symptoms: string; severity: number; duration: string; food: string;
   occurredAt: string; createdAt: string;
@@ -11,8 +10,24 @@ export type Profile = { allergens: string[]; contact_name: string; contact_phone
 
 const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : d ? String(d) : "");
 
+export function cleanIngredients(list: unknown): Ingredient[] {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const out: Ingredient[] = [];
+  for (const item of list) {
+    const name = String((item as any)?.name ?? item ?? "").trim().slice(0, 80);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name, flagged: !!(item as any)?.flagged });
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
 export const toMeal = (r: any): Meal => ({
-  id: r.id, name: r.name, details: r.details ?? "", flags: r.flags ?? [], createdAt: iso(r.created_at),
+  id: r.id, name: r.name, details: r.details ?? "", flags: r.flags ?? [],
+  ingredients: cleanIngredients(r.ingredients), createdAt: iso(r.created_at),
 });
 
 export const toReaction = (r: any): Reaction => ({
@@ -25,18 +40,18 @@ export const toReaction = (r: any): Reaction => ({
   createdAt: iso(r.created_at),
 });
 
-export async function listMeals() {
-  const rows = await sql`select * from meals where user_id = ${USER_ID} order by created_at desc limit 200`;
+export async function listMeals(userId: string) {
+  const rows = await sql`select * from meals where user_id = ${userId} order by created_at desc limit 200`;
   return rows.map(toMeal);
 }
 
-export async function listReactions() {
-  const rows = await sql`select * from reactions where user_id = ${USER_ID} order by coalesce(occurred_at, created_at) desc limit 200`;
+export async function listReactions(userId: string) {
+  const rows = await sql`select * from reactions where user_id = ${userId} order by coalesce(occurred_at, created_at) desc limit 200`;
   return rows.map(toReaction);
 }
 
-export async function getProfile(): Promise<Profile> {
-  const rows = await sql`select * from profiles where id = ${USER_ID}`;
+export async function getProfile(userId: string): Promise<Profile> {
+  const rows = await sql`select * from profiles where id = ${userId}`;
   const p = rows[0];
   return { allergens: p?.allergens ?? [], contact_name: p?.contact_name ?? "", contact_phone: p?.contact_phone ?? "" };
 }

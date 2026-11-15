@@ -5,9 +5,9 @@ import { GoogleGenAI } from "@google/genai";
 const MODELS = [
   process.env.GEMINI_MODEL,
   "gemini-3.5-flash",
+  "gemini-3.1-flash-lite", // fast, separate quota: the best backup when 3.5 is rate-limited
   "gemini-3.8-flash",
   "gemini-flash-latest",
-  "gemini-3.1-flash-lite",
 ].filter(Boolean) as string[];
 const ATTEMPT_TIMEOUT_MS = 20_000;
 export const maxDuration = 120;
