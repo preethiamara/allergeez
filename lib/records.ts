@@ -3,7 +3,7 @@ import { sql } from "@/lib/db";
 export type Ingredient = { name: string; flagged: boolean };
 export type Meal = { id: number; name: string; details: string; flags: string[]; ingredients: Ingredient[]; createdAt: string };
 export type Reaction = {
-  id: number; symptoms: string; severity: number; duration: string; food: string;
+  id: number; title: string; symptoms: string; symptomTags: string[]; severity: number; duration: string; food: string;
   occurredAt: string; createdAt: string;
 };
 export type Profile = { allergens: string[]; contact_name: string; contact_phone: string };
@@ -32,7 +32,9 @@ export const toMeal = (r: any): Meal => ({
 
 export const toReaction = (r: any): Reaction => ({
   id: r.id,
+  title: r.title || "",
   symptoms: r.symptoms || r.suspected_trigger || "Reaction",
+  symptomTags: r.symptom_tags ?? [],
   severity: r.severity ?? 0,
   duration: r.duration || "Not recorded",
   food: r.meal_name || "No related meal added",

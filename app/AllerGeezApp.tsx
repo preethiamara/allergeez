@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Ingredient, Meal, Profile, Reaction } from "@/lib/records";
 import type { SessionUser } from "@/lib/auth/server";
 import { AppHeader, Buddy, BuddyInBowl, Icon } from "./ui";
@@ -8,7 +8,8 @@ import IngredientModal from "./IngredientModal";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
 import CameraCapture from "./CameraCapture";
 import type { FoodProduct, Nutrients } from "@/lib/nutrition";
-import { allergenMatches } from "@/lib/allergens";
+import { allergenMatches, allergyGroup } from "@/lib/allergens";
+import { attackTag, detectSymptoms, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
@@ -150,6 +151,9 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const [foodSearch, setFoodSearch] = useState<{ loading: boolean; products?: FoodProduct[]; error?: string; query?: string }>({ loading: false });
   const [openFood, setOpenFood] = useState<string>();
   const [selectedFoods, setSelectedFoods] = useState<FoodProduct[]>([]);
+  // Allergy groups the user added by hand on the review screen (the "+" chip)
+  const [extraGroups, setExtraGroups] = useState<string[]>([]);
+  const [groupDraft, setGroupDraft] = useState<string | null>(null);
   // Product matched from a photo (Gemini reads brand/barcode → Bright Data looks it up)
   const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string } | null>(null);
   const [scan, setScan] = useState<{ loading: boolean; result?: ScanResult; error?: string }>({ loading: false });
@@ -165,6 +169,10 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const [mealName, setMealName] = useState("");
   const [reactionPhoto, setReactionPhoto] = useState<string>();
   const reactionInput = useRef<HTMLInputElement>(null);
+  // AI "attack tag" for the reaction being recorded
+  const [reactionAI, setReactionAI] = useState<{ loading: boolean; tag?: string; symptoms?: string[]; timing?: string; intensity?: string; food?: string; source?: string; forText?: string } | null>(null);
+  const [reactionTag, setReactionTag] = useState("");
+  const analyzeSeq = useRef(0);
   const testInput = useRef<HTMLInputElement>(null);
 
   // voice
@@ -221,7 +229,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   async function handleMealFile(file: File, target: Screen = "review") {
     setCameraFor(null);
-    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setScan({ loading: true }); go(target);
+    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null); setScan({ loading: true }); go(target);
     const image = await prepareImage(file);
     setPhoto(`data:${image.mimeType};base64,${image.data}`);
     lastScanInput.current = { image };
@@ -252,7 +260,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   ].filter(Boolean).join("\n");
 
   function reviewDescription() {
-    setPhoto(undefined); setPhotoMatch(null);
+    setPhoto(undefined); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null);
     const text = describeForAI();
     lastScanInput.current = { text };
     go("review");
@@ -269,10 +277,19 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     // Merge near-duplicates from Gemini vs the food database ("tree nut"/"tree nuts", "dairy"/"milk")
     const dedupe = (list: string[], against: string[] = []) => list.reduce<string[]>(
       (out, a) => (out.some(b => allergenMatches(a, b)) || against.some(b => allergenMatches(a, b)) ? out : [...out, a]), []);
-    const mineUnique = dedupe(mine);
-    const common = dedupe([...(r?.common_allergens ?? []).map(a => a.toLowerCase()), ...fromFoods], mineUnique);
-    return { mine: mineUnique, common };
-  }, [scan.result, selectedFoods, allergens]);
+    // Show allergy groups ("Dairy", "Tree nuts") rather than raw ingredient words
+    const groups = (list: string[]) => [...new Set(list.map(allergyGroup))];
+    const mineUnique = groups(dedupe(mine));
+    const common = groups(dedupe([...(r?.common_allergens ?? []).map(a => a.toLowerCase()), ...fromFoods, ...extraGroups], mine))
+      .filter(g => !mineUnique.includes(g) && !allergens.some(p => allergyGroup(p) === g));
+    const mineAll = [...new Set([...mineUnique, ...extraGroups.map(allergyGroup).filter(g => allergens.some(p => allergyGroup(p) === g))])];
+    return { mine: mineAll, common };
+  }, [scan.result, selectedFoods, allergens, extraGroups]);
+  const addGroup = () => {
+    const g = (groupDraft ?? "").trim();
+    if (g) setExtraGroups(list => (list.some(x => allergyGroup(x) === allergyGroup(g)) ? list : [...list, g]));
+    setGroupDraft(null);
+  };
 
   async function saveMeal() {
     setSaveError("");
@@ -296,7 +313,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   const resetMeal = () => {
     setDesc(""); setPhoto(undefined); setScan({ loading: false });
-    setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null);
+    setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null);
     go("home");
   };
 
@@ -334,6 +351,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   // ---------- reactions ----------
   const startReaction = () => {
     setSymptoms(""); setSeverity(4); setOccurredAt(localNow()); setDuration(""); setMealName(""); setReactionPhoto(undefined); setVoiceMsg("");
+    setReactionAI(null); setReactionTag("");
     go("reaction-form");
   };
 
@@ -346,12 +364,35 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     const r = new FileReader(); r.onload = () => setReactionPhoto(String(r.result)); r.readAsDataURL(file);
   }
 
+  async function analyzeSymptoms(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const id = ++analyzeSeq.current;
+    // Show the instant keyword guess while Gemini works
+    const quick = detectSymptoms(t);
+    setReactionAI({ loading: true, tag: attackTag(quick, t), symptoms: quick });
+    setReactionTag(attackTag(quick, t));
+    try {
+      const out = await jsonFetch("/api/reactions/analyze", { method: "POST", body: JSON.stringify({ text: t }) });
+      if (id !== analyzeSeq.current) return;
+      setReactionAI({ loading: false, tag: out.tag, symptoms: out.symptoms, timing: out.timing, intensity: out.intensity, food: out.food, source: out.source, forText: t });
+      setReactionTag(out.tag);
+    } catch {
+      if (id === analyzeSeq.current) setReactionAI(a => ({ ...(a ?? {}), loading: false }));
+    }
+  }
+
   async function saveReaction() {
     setSaveError("");
     try {
+      const food = mealName;
       const reaction: Reaction = await jsonFetch("/api/reactions", {
         method: "POST",
-        body: JSON.stringify({ symptoms, severity, duration, mealName, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : undefined }),
+        body: JSON.stringify({
+          symptoms, severity, duration, mealName: food, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : undefined,
+          title: reactionTag.trim() || attackTag(detectSymptoms(symptoms), symptoms),
+          symptomTags: reactionAI?.symptoms ?? detectSymptoms(symptoms),
+        }),
       });
       setReactions(r => [reaction, ...r]);
       if (reactionPhoto) setReactionImages(m => ({ ...m, [reaction.id]: reactionPhoto }));
@@ -388,16 +429,33 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   const voiceNotes = useMemo(() => {
     const t = symptoms.trim();
-    const timing = t.match(/\b(after|before|about|around|minutes?|hours?|today|tonight|morning|evening)\b[^.!?]*/i)?.[0];
-    const intensity = t.match(/\b(mild|moderate|severe|intense|bad|painful)\b/i)?.[0];
-    const food = t.match(/\b(?:ate|eating|had)\s+([^,.!?]+)/i)?.[1];
+    // Use the AI read when it's for (roughly) the current transcript; fill gaps with local parsing
+    const ai = reactionAI?.forText && t.startsWith(reactionAI.forText.slice(0, Math.max(0, reactionAI.forText.length - 12))) ? reactionAI : null;
+    const syms = ai?.symptoms?.length ? ai.symptoms : detectSymptoms(t);
     return [
-      { label: "Symptoms", value: t ? t.split(/[.!?]/)[0] : "Listening for what you’re feeling…" },
-      { label: "Timing", value: timing || "Not mentioned yet" },
-      { label: "Intensity", value: intensity || "Not mentioned yet" },
-      { label: "Food context", value: food || "Not mentioned yet" },
+      { label: "Symptoms", value: !t ? "Listening for what you’re feeling…" : syms.length ? syms.join(", ") : "Not clear yet. Try naming what you feel" },
+      { label: "Timing", value: ai?.timing || parseTiming(t) || "Not mentioned yet" },
+      { label: "Intensity", value: ai?.intensity || parseIntensity(t) || "Not mentioned yet" },
+      { label: "Food context", value: ai?.food || parseFood(t) || "Not mentioned yet" },
     ];
-  }, [symptoms]);
+  }, [symptoms, reactionAI]);
+
+  // On the Talk to Gee screen, have AI read the transcript as it grows (after a short pause) and when talking stops
+  useEffect(() => {
+    if (screen !== "gee-voice" || !symptoms.trim() || symptoms.trim() === reactionAI?.forText) return;
+    const t = setTimeout(() => analyzeSymptoms(symptoms), listening ? 1500 : 500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symptoms, listening, screen]);
+
+  // Meals logged on the same day as the reaction
+  const mealsThatDay = useMemo(() => {
+    const day = occurredAt ? new Date(occurredAt).toDateString() : new Date().toDateString();
+    return meals.filter(m => new Date(m.createdAt).toDateString() === day);
+  }, [meals, occurredAt]);
+  useEffect(() => {
+    if (mealName && !mealsThatDay.some(m => m.name === mealName)) setMealName("");
+  }, [mealsThatDay, mealName]);
 
   // ---------- profile & patterns ----------
   async function saveProfile(nextAllergens = allergens) {
@@ -408,11 +466,31 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
       setProfileState("saved");
     } catch (e: any) { setProfileState("error"); setProfileMsg(e.message); }
   }
-  const addAllergen = () => {
-    const items = newAllergen.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  // Each typed allergen is checked first: known list, then AI (fixes typos, rejects non-foods)
+  const [allergenCheck, setAllergenCheck] = useState<{ busy: boolean; problems: { name: string; reason: string; suggestion?: string; unsure?: boolean }[] }>({ busy: false, problems: [] });
+  const commitAllergens = (names: string[]) => {
+    if (!names.length) return;
+    const next = [...new Set([...allergens, ...names.map(n => n.toLowerCase())])];
+    setAllergens(next); saveProfile(next);
+  };
+  async function addAllergen(text = newAllergen) {
+    const items = [...new Set(text.split(",").map(s => s.trim()).filter(Boolean))];
     if (!items.length) return;
-    const next = [...new Set([...allergens, ...items])];
-    setNewAllergen(""); setAllergens(next); saveProfile(next);
+    setAllergenCheck({ busy: true, problems: [] });
+    const results: any[] = [];
+    for (const text of items) { // one at a time, so several entries don't trip Gemini's per-minute limit
+      results.push(await jsonFetch("/api/allergens/check", { method: "POST", body: JSON.stringify({ text }) })
+        .catch(() => ({ valid: false, unsure: true, name: text, reason: `Couldn’t check “${text}” right now.` })));
+    }
+    commitAllergens(results.filter(r => r.valid).map(r => r.name));
+    const problems = results.filter(r => !r.valid).map(r => ({ name: r.name, reason: r.reason, suggestion: r.suggestion || undefined, unsure: !!r.unsure }));
+    setAllergenCheck({ busy: false, problems });
+    setNewAllergen(problems.map(p => p.name).join(", "));
+  }
+  const resolveProblem = (name: string, add?: string) => {
+    if (add) commitAllergens([add]);
+    setAllergenCheck(c => ({ ...c, problems: c.problems.filter(p => p.name !== name) }));
+    setNewAllergen(v => v.split(",").map(x => x.trim()).filter(x => x && x !== name).join(", "));
   };
   const removeAllergen = (a: string) => { const next = allergens.filter(x => x !== a); setAllergens(next); saveProfile(next); };
   async function saveContact(c: { name: string; phone: string }) {
@@ -687,12 +765,27 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                   </div>
                   <textarea aria-label="Food notes" value={desc} onChange={e => setDesc(e.target.value)}
                     placeholder={photo ? "I can see your photo. Add any details you remember, like sauces or ingredients." : ""} />
+                  <p className="ai-card__groups-label">Possible allergy groups</p>
                   <div className="possible-tags">
                     {scan.loading && <span className="tag-loading">Checking ingredients…</span>}
                     {mealFlags.mine.map(a => <span key={a} className="tag-alert">Your allergen: {a}</span>)}
-                    {mealFlags.common.map(a => <span key={a}>Possible: {a}</span>)}
-                    {scan.result && !mealFlags.mine.length && !mealFlags.common.length && <span>No common allergens spotted</span>}
-                    {scan.result && !allergens.length && <span>Add your allergens for alerts</span>}
+                    {mealFlags.common.map(a => {
+                      const manual = extraGroups.some(x => allergyGroup(x) === a);
+                      return (
+                        <span key={a} className={manual ? "tag-manual" : ""}>{a}
+                          {manual && <button onClick={() => setExtraGroups(l => l.filter(x => allergyGroup(x) !== a))} aria-label={`Remove ${a}`}><Icon name="close" size={11} strokeWidth={2.4} /></button>}
+                        </span>
+                      );
+                    })}
+                    {scan.result && !mealFlags.mine.length && !mealFlags.common.length && groupDraft === null && <span>None spotted</span>}
+                    {groupDraft === null ? (
+                      <button className="tag-add" onClick={() => setGroupDraft("")} aria-label="Add another possible allergen"><Icon name="plus" size={13} strokeWidth={2.4} /></button>
+                    ) : (
+                      <form className="tag-add-form" onSubmit={e => { e.preventDefault(); addGroup(); }}>
+                        <input autoFocus value={groupDraft} onChange={e => setGroupDraft(e.target.value)} onBlur={addGroup}
+                          placeholder="e.g. sesame" aria-label="Another possible allergen" />
+                      </form>
+                    )}
                   </div>
                   {scan.result?.note && <p className="ai-card__note">{scan.result.note}</p>}
                   {scan.error && (
@@ -787,9 +880,27 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 ))}
               </div>
               <form className="inline-add" onSubmit={e => { e.preventDefault(); addAllergen(); }}>
-                <input value={newAllergen} onChange={e => setNewAllergen(e.target.value)} placeholder="Add an allergen" aria-label="Add an allergen" />
-                <button type="submit" disabled={!newAllergen.trim()} aria-label="Add allergen"><Icon name="plus" size={18} strokeWidth={2.2} /></button>
+                <input value={newAllergen} onChange={e => { setNewAllergen(e.target.value); if (allergenCheck.problems.length) setAllergenCheck({ busy: false, problems: [] }); }}
+                  placeholder="Add an allergen" aria-label="Add an allergen" />
+                <button type="submit" disabled={!newAllergen.trim() || allergenCheck.busy} aria-label="Add allergen">
+                  {allergenCheck.busy ? <span className="mini-spinner" aria-hidden="true" /> : <Icon name="plus" size={18} strokeWidth={2.2} />}
+                </button>
               </form>
+              {allergenCheck.busy && <p className="allergen-check__status">Checking it’s a food allergen…</p>}
+              {allergenCheck.problems.map(p => (
+                <div className="allergen-check" role="alert" key={p.name}>
+                  <Icon name="alert" size={16} />
+                  <p>{p.reason}</p>
+                  <div>
+                    {p.suggestion && <button onClick={() => resolveProblem(p.name, p.suggestion)}>Yes, add “{p.suggestion}”</button>}
+                    {p.unsure && <button className="is-quiet" onClick={() => addAllergen(p.name)}>Try again</button>}
+                    <button className="is-quiet allergen-override" onClick={() => resolveProblem(p.name, p.name.toLowerCase())}>
+                      {p.suggestion ? `No, keep “${p.name}”` : `Add “${p.name}” anyway`}
+                    </button>
+                    <button className="is-quiet" onClick={() => resolveProblem(p.name)} aria-label="Dismiss"><Icon name="close" size={13} strokeWidth={2.2} /></button>
+                  </div>
+                </div>
+              ))}
 
             </section>
 
@@ -848,7 +959,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             <section className="voice-insights" aria-live="polite">
               <div className="voice-insights__heading">
                 <span><Icon name="spark" size={17} /> AI notes from what you said</span>
-                <small>Live preview</small>
+                <small>{reactionAI?.loading ? "Gee is reading…" : reactionAI?.source === "gemini" ? "AI read" : "Live preview"}</small>
               </div>
               <ul>
                 {voiceNotes.map(n => (
@@ -926,7 +1037,10 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <span>What did you eat beforehand? <small>Optional</small></span>
                 <select value={mealName} onChange={e => setMealName(e.target.value)}>
                   <option value="">Select a meal</option>
-                  {meals.map(m => <option key={m.id} value={m.name}>{m.name} · {timeAgo(m.createdAt)}</option>)}
+                  {mealsThatDay.length === 0 && <option disabled value="__none__">No meals logged that day</option>}
+                  {mealsThatDay.map(m => (
+                    <option key={m.id} value={m.name}>{m.name} · {new Date(m.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</option>
+                  ))}
                 </select>
               </label>
               <div className="reaction-photo-field">
@@ -947,7 +1061,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <input ref={reactionInput} hidden type="file" accept="image/*" onChange={onReactionPhoto} />
               </div>
             </div>
-            <button className="primary-button reaction-continue" disabled={!symptoms.trim()} onClick={() => go("reaction-review")}>
+            <button className="primary-button reaction-continue" disabled={!symptoms.trim()} onClick={() => { go("reaction-review"); analyzeSymptoms(symptoms); }}>
               Review my check-in <Icon name="arrow" size={20} />
             </button>
           </div>
@@ -976,9 +1090,16 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <div className="reaction-summary-card">
                   <div className="reaction-summary-card__top">
                     {reactionPhoto ? <img src={reactionPhoto} alt="" /> : <span className="reaction-summary-card__icon"><Icon name="spark" size={24} /></span>}
-                    <div><small>Symptoms</small><strong>{symptoms}</strong></div>
+                    <div className="reaction-tag">
+                      <small>{reactionAI?.loading ? "Gee is reading your symptoms…" : "Reaction tag"}</small>
+                      <input value={reactionTag} onChange={e => setReactionTag(e.target.value)} aria-label="Reaction tag" maxLength={60} />
+                    </div>
                     <b className={sevClass(severity)}>{severity}/10</b>
                   </div>
+                  {!!reactionAI?.symptoms?.length && (
+                    <div className="symptom-chips">{reactionAI.symptoms.map(x => <span key={x}>{x}</span>)}</div>
+                  )}
+                  <p className="reaction-said">“{symptoms}”</p>
                   <dl>
                     <div><dt>Started</dt><dd>{occurredAt ? new Date(occurredAt).toLocaleString() : "Not added"}</dd></div>
                     <div><dt>Duration</dt><dd>{duration || "Not added"}</dd></div>
@@ -1019,13 +1140,16 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                         {reactionImages[r.id] ? <img src={reactionImages[r.id]} alt="" /> : <span className="reaction-summary-card__icon"><Icon name="medical" size={22} /></span>}
                         <div>
                           <small><Icon name="clock" size={13} />{new Date(r.occurredAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small>
-                          <strong>{r.symptoms}</strong>
+                          <strong>{r.title || attackTag(detectSymptoms(r.symptoms), r.symptoms)}</strong>
+                          {(() => { const tags = r.symptomTags.length ? r.symptomTags : detectSymptoms(r.symptoms);
+                            return tags.length > 0 && <span className="symptom-chips symptom-chips--small">{tags.slice(0, 4).map(x => <span key={x}>{x}</span>)}</span>; })()}
                         </div>
                         {r.severity > 0 && <b className={sevClass(r.severity)}>{r.severity}/10</b>}
                       </div>
                       <details>
                         <summary>View details</summary>
                         <dl>
+                          <div><dt>What you said</dt><dd>{r.symptoms}</dd></div>
                           <div><dt>Duration</dt><dd>{r.duration}</dd></div>
                           <div><dt>Food beforehand</dt><dd>{r.food}</dd></div>
                           <div><dt>Potential allergens</dt><dd>{flags.length ? flags.join(", ") : "Not enough information yet"}</dd></div>
