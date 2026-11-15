@@ -6,6 +6,7 @@
 // usually followed by a reaction (reaction rate), more so for severe and fast reactions. Ingredients you
 // flagged yourself get a small boost. Confidence grows with the number of reactions behind it.
 import { allergyGroup, allergenMatches } from "./allergens";
+import { ingredientsOnly } from "./ingredients";
 
 export type IrritantMeal = { id: number; name: string; flags: string[]; ingredients: { name: string; flagged: boolean }[]; createdAt: string };
 export type IrritantReaction = { id: number; food: string; severity: number; occurredAt: string };
@@ -38,7 +39,8 @@ function itemsOf(meal: IrritantMeal): { key: string; name: string; kind: "group"
     out.set(key, { key, name: g, kind: "group", flagged: flagged || !!cur?.flagged });
   };
   for (const f of meal.flags) addGroup(f);
-  for (const ing of meal.ingredients) {
+  // Only real ingredients count; product / dish names saved by older versions are skipped
+  for (const ing of ingredientsOnly(meal.ingredients, meal.name)) {
     const n = norm(ing.name);
     if (!n || GENERIC.has(n)) continue;
     out.set(`i:${n}`, { key: `i:${n}`, name: ing.name.trim(), kind: "ingredient", flagged: ing.flagged });

@@ -3,6 +3,7 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { getProfile, listMeals, listReactions } from "@/lib/records";
 import { findLikelyIrritants } from "@/lib/irritants";
+import { ingredientsOnly } from "@/lib/ingredients";
 
 // "Gee": a Mastra agent that runs the reaction check-in conversation. It asks for whatever is missing,
 // looks up the user's meals and history with tools, and runs the likely-irritant algorithm.
@@ -31,7 +32,7 @@ const getMealsBeforeReaction = createTool({
         name: m.name,
         loggedAt: new Date(m.createdAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" }),
         minutesBeforeReaction: Math.round((at - new Date(m.createdAt).getTime()) / 60e3),
-        ingredients: m.ingredients.map(i => i.name).slice(0, 15),
+        ingredients: ingredientsOnly(m.ingredients, m.name).map(i => i.name).slice(0, 15),
         allergyGroups: m.flags,
       }));
   },
@@ -89,7 +90,8 @@ HOW TO TALK:
 Do not call any tool more than once per turn. Never call a tool before you know what they ate.
 6. If they say they don't know or don't want to answer, accept it, mark that field "unknown", and move on.
 7. Consider more than the big allergens: food additives (sulfites, colorings like Red 40, MSG, preservatives, sweeteners) and compounds foods are naturally high in (histamine, nickel, salicylates, tyramine). The briefing lists these for each recent meal. If one of the user's known allergens is among them, mention it briefly.
-8. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
+8. INGREDIENTS, NOT PRODUCTS: a likely irritant is always an ingredient (e.g. walnuts, pea protein), an additive (e.g. sulfites) or an allergy group (e.g. Tree nuts), never a whole product, brand or dish name (not "Pure Organic Fruit Bars" or "pad thai"). If the user names a product or dish, record it as the food, and talk about the ingredients in it that could be the cause. When you summarize likely irritants, name ingredients or groups only.
+9. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
   // Fast model first; fall back if it's rate-limited or slow
   model: [
     { model: `google/${process.env.GEMINI_MODEL || "gemini-3.1-flash-lite"}`, maxRetries: 1 },
@@ -111,6 +113,6 @@ export const checkInSchema = z.object({
   asking: z.enum(["symptoms", "detail", "timing", "severity", "food", "duration", "none"]).describe("Which field the reply asks about"),
   done: z.boolean().describe("True when symptoms, timing, severity and food are known"),
   emergency: z.boolean().describe("True if symptoms sound like a severe reaction"),
-  likelyIrritants: z.array(z.object({ name: z.string(), confidence: z.string(), evidence: z.string() })).describe("From find-likely-irritants, only when done; else []"),
+  likelyIrritants: z.array(z.object({ name: z.string().describe("An ingredient, additive or allergy group, never a product or dish name"), confidence: z.string(), evidence: z.string() })).describe("From find-likely-irritants, only when done; else []"),
 });
 export type CheckIn = z.infer<typeof checkInSchema>;

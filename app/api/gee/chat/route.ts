@@ -3,6 +3,7 @@ import { checkInSchema, geeAgent, type CheckIn } from "@/lib/gee/agent";
 import { getActor } from "@/lib/session";
 import { listMeals, listReactions, getProfile } from "@/lib/records";
 import { findLikelyIrritants } from "@/lib/irritants";
+import { ingredientsOnly } from "@/lib/ingredients";
 import { detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 
 export const maxDuration = 60;
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
     const recent = meals
       .filter(m => { const gap = at - new Date(m.createdAt).getTime(); return gap >= -30 * 60e3 && gap <= 8 * 3600e3; })
       .slice(0, 6)
-      .map(m => `- ${m.name} (logged ${new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}; ingredients: ${m.ingredients.map(i => i.name).slice(0, 8).join(", ") || m.details}${m.flags.length ? `; allergy groups, additives & natural triggers: ${m.flags.join(", ")}` : ""})`);
+      .map(m => `- ${m.name} (logged ${new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}; ingredients: ${ingredientsOnly(m.ingredients, m.name).map(i => i.name).slice(0, 12).join(", ") || "not listed"}${m.flags.length ? `; allergy groups, additives & natural triggers: ${m.flags.join(", ")}` : ""})`);
     const briefing = [
       `The check-in started at ${now}.`,
       `Known allergens: ${profile.allergens.join(", ") || "none listed"}.`,

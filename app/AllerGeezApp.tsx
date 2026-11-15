@@ -12,6 +12,7 @@ import type { FoodProduct, Nutrients } from "@/lib/nutrition";
 import { allergenMatches, allergyGroup } from "@/lib/allergens";
 import { attackTag, detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 import { findLikelyIrritants } from "@/lib/irritants";
+import { ingredientsOnly, splitIngredients } from "@/lib/ingredients";
 import { matchesUserList, type Additive, type NaturalTrigger, detectAdditives, detectNaturalTriggers } from "@/lib/additives";
 
 type Screen =
@@ -20,18 +21,6 @@ type Screen =
   | "profile" | "test-food" | "test-describe";
 
 type NutritionEstimate = { portion?: string; kcal?: number; protein?: number; carbs?: number; fat?: number; sugars?: number; fiber?: number; sodiumMg?: number };
-/** "Oats, chia seeds, sugars (cane sugar, tapioca syrup), natural flavors." → top-level ingredients */
-function splitIngredients(text: string) {
-  const out: string[] = []; let depth = 0, cur = "";
-  for (const ch of text.replace(/^\s*ingredients?\s*:\s*/i, "")) {
-    if (ch === "(" || ch === "[") depth++;
-    if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
-    if ((ch === "," || ch === ";") && depth === 0) { out.push(cur); cur = ""; } else cur += ch;
-  }
-  out.push(cur);
-  return out.map(x => x.replace(/[.*]+$/g, "").replace(/\*/g, "").trim()).filter(x => x && x.length < 120).slice(0, 40);
-}
-
 type ScanResult = {
   kind?: "packaged" | "label" | "menu" | "homemade" | "restaurant" | "not_food";
   name?: string; ingredients?: string[]; flags?: { ingredient: string; allergen: string; reason: string }[];
@@ -376,14 +365,19 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     const foodNames = selectedFoods.map(f => f.brand && !f.name.toLowerCase().includes(f.brand.split(",")[0].toLowerCase()) ? `${f.brand.split(",")[0]} ${f.name}` : f.name);
     const details = [desc.trim(), ...foodNames].filter(Boolean).join(", ") || "Food photo";
     const fallback = details.split(/[,.\n]/)[0].trim();
+    const mealNameForSave = scan.result?.name || (fallback.length > 34 ? "New meal" : fallback);
     try {
       const meal: Meal = await jsonFetch("/api/meals", {
         method: "POST",
         body: JSON.stringify({
-          name: scan.result?.name || (fallback.length > 34 ? "New meal" : fallback), details,
+          name: mealNameForSave, details,
           flags: [...new Set([...mealFlags.mine, ...mealFlags.common,
             ...(scan.result?.additives ?? []).map(a => a.group), ...(scan.result?.natural_triggers ?? []).map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger)])],
-          ingredients: [...foodNames, ...(scan.result?.ingredients ?? [])].slice(0, 40).map(name => ({ name, flagged: false })),
+          // Ingredients only: a packaged product contributes its label's ingredients, never its product name
+          ingredients: ingredientsOnly([
+            ...selectedFoods.flatMap(f => f.ingredients ? splitIngredients(f.ingredients) : []),
+            ...(scan.result?.ingredients ?? []),
+          ].map(name => ({ name, flagged: false })), mealNameForSave).slice(0, 40),
           eatenAt: eatenAt ? new Date(eatenAt).toISOString() : undefined,
         }),
       });
