@@ -1,4 +1,4 @@
-# AllerGeez 💗
+# Allergeez 💗
 
 **Your food & reaction buddy for food allergies.** Snap a meal, test a food before you eat it, find safe dishes at restaurants nearby, log reactions by just talking to Gee, and get calm, voice-guided help in an emergency.
 
@@ -153,4 +153,4 @@ All keys are used **only on the server** (API routes). Nothing is exposed to the
 
 ---
 
-Built for a hackathon with 💗 by the AllerGeez team.
+
