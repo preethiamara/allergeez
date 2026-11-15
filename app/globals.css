@@ -973,3 +973,116 @@ h1{font-size:27px}
 .reaction-log-card details[open] summary>span:before{content:"▾"}
 .reaction-log-card .reaction-delete{position:static;margin:-4px -3px -4px 0}
 .reaction-log-card .gee-transcript summary{justify-content:flex-start}
+/* ---------- Emergency guide: tell Gee what's happening + inactivity alarm ---------- */
+.guide-talk{background:#fff;border:1.5px solid #f1c9c6;border-radius:22px;margin-bottom:12px;padding:14px}
+.guide-talk__head strong{color:var(--ink);font:800 16px Nunito,sans-serif;display:block}
+.guide-talk__head small{color:var(--muted);margin-top:2px;font-size:12px;display:block}
+.guide-talk__mic{color:#fff;cursor:pointer;background:var(--red);border:0;border-radius:16px;justify-content:center;align-items:center;gap:8px;width:100%;min-height:54px;margin-top:10px;font:800 16px Nunito,sans-serif;display:flex;position:relative;overflow:hidden}
+.guide-talk__mic.is-listening{background:#b93232;animation:1.2s ease-in-out infinite tag-pulse}
+.guide-talk__mic:disabled{opacity:.7}
+.guide-talk__level{transform-origin:0;background:#ffffff59;height:4px;transition:transform .08s;position:absolute;bottom:0;left:0;right:0}
+.guide-talk__type{gap:8px;margin-top:8px;display:flex}
+.guide-talk__type input{border:1px solid var(--border);color:var(--ink);border-radius:12px;flex:1;min-width:0;min-height:42px;padding:0 12px;font-size:14px}
+.guide-talk__type button{color:#fff;cursor:pointer;background:#b65070;border:0;border-radius:12px;place-items:center;width:44px;display:grid}
+.guide-talk__type button:disabled{opacity:.45}
+.guide-talk__notes{gap:6px;margin:10px 0 0;padding:0;list-style:none;display:grid}
+.guide-talk__notes li{border-radius:12px;padding:7px 10px;font-size:13px;line-height:1.4}
+.guide-talk__notes li.is-you{background:#fdf0ef}
+.guide-talk__notes li.is-gee{background:#f4f8f5}
+.guide-checkin{z-index:40;background:#402a2fa6;place-items:center;padding:20px;display:grid;position:fixed;inset:0}
+.guide-checkin>div{text-align:center;background:#fff;border-radius:26px;width:min(100%,380px);padding:26px 20px;box-shadow:0 15px 45px #32141e4d}
+.guide-checkin h2{color:var(--ink);font:800 28px Nunito,sans-serif}
+.guide-checkin p{color:var(--muted);margin:8px 0 16px;font-size:14px}
+.guide-checkin .call-button{justify-content:center;gap:8px;min-height:64px;font-size:20px;display:flex}
+@keyframes alarm-flash{0%,100%{background:#d94f4f}50%{background:#8f1d1d}}
+.guide-alarm{z-index:50;place-items:center;padding:16px;animation:.8s step-end infinite alarm-flash;display:grid;position:fixed;inset:0;overflow-y:auto}
+.guide-alarm__card{text-align:center;background:#fff;border-radius:26px;width:min(100%,400px);padding:22px 18px;box-shadow:0 15px 45px #00000059}
+.guide-alarm__card img{margin:0 auto 6px}
+.guide-alarm__card h2{color:#b93232;font:900 26px Nunito,sans-serif}
+.guide-alarm__card>p{color:var(--ink);margin:6px 0 10px;font-size:15px}
+.guide-alarm__card ol{text-align:left;color:var(--ink);margin:0 0 14px;padding-left:22px;font-size:14px;line-height:1.5}
+.guide-alarm__card .secondary-button{justify-content:center;gap:8px;margin-top:8px;display:flex}
+.guide-alarm__call{justify-content:center;gap:8px;min-height:60px;font-size:20px;display:flex}
+.guide-alarm__stop{color:#fff;cursor:pointer;background:#2e7d4f;border:0;border-radius:18px;width:100%;min-height:64px;margin-top:12px;font:900 19px Nunito,sans-serif}
+.guide-alarm__card ol{list-style:decimal}.guide-alarm__card ol li{margin-bottom:4px}
+.guide-alarm__status{color:var(--muted);margin:12px 0 0;font:700 12px Nunito,sans-serif}
+.guide-alarm.is-silent{background:#b93232;animation:none}
+/* ---------- Emergency guide: one Gee chat (voice + text) ---------- */
+.guide-step__nav{justify-content:space-between;align-items:center}
+.guide-step__count{color:var(--muted);font:800 13px Nunito,sans-serif}
+.gee-sos{background:#fff;border:1.5px solid #f1c9c6;border-radius:22px;margin-bottom:12px;padding:12px}
+.gee-sos__chat{scroll-behavior:smooth;flex-direction:column;gap:8px;max-height:230px;padding:2px 2px 6px;display:flex;overflow-y:auto}
+.gee-sos__msg{align-items:flex-end;gap:7px;max-width:92%;display:flex}
+.gee-sos__msg p{border-radius:16px;margin:0;padding:8px 11px;font-size:13px;line-height:1.42}
+.gee-sos__msg.is-gee p{color:var(--ink);background:#f7eef0;border-bottom-left-radius:5px}
+.gee-sos__msg.is-gee .buddy{flex:none;width:26px;height:26px}
+.gee-sos__msg.is-you{align-self:flex-end}
+.gee-sos__msg.is-you p{color:#fff;background:#b65070;border-bottom-right-radius:5px}
+.gee-sos__replay{color:#b65070;cursor:pointer;background:0 0;border:0;flex:none;align-self:center;padding:2px}
+.gee-sos__bar{border-top:1px solid #f3e6e8;align-items:center;gap:10px;margin-top:6px;padding-top:10px;display:flex}
+.gee-sos__mascot{cursor:pointer;background:#fdeef2;border:2px solid #f4c3d0;border-radius:50%;flex:none;place-items:center;width:58px;height:58px;padding:0;display:grid;position:relative}
+.gee-sos__mascot .buddy{width:44px;height:44px}
+.gee-sos__mascot:disabled{opacity:.6}
+.gee-sos__mascot.is-speaking .buddy{animation:1.1s ease-in-out infinite gee-bob}
+.gee-sos__mascot.is-listening{background:#fde2e2;border-color:var(--red)}
+.gee-sos__mic{color:#fff;background:var(--red);border:2px solid #fff;border-radius:50%;place-items:center;width:22px;height:22px;display:grid;position:absolute;bottom:-3px;right:-3px}
+.gee-sos__ring{pointer-events:none;border:3px solid #d94f4f80;border-radius:50%;transition:transform .08s;position:absolute;inset:-6px}
+.gee-sos__type{flex:1;gap:6px;min-width:0;display:flex}
+.gee-sos__type input{border:1px solid var(--border);color:var(--ink);border-radius:14px;flex:1;min-width:0;min-height:44px;padding:0 12px;font-size:14px}
+.gee-sos__type button{color:#fff;cursor:pointer;background:#b65070;border:0;border-radius:14px;flex:none;place-items:center;width:44px;display:grid}
+.gee-sos__type button:disabled{opacity:.45}
+.gee-sos__hint{color:var(--muted);text-align:center;margin-top:6px;font:700 11px Nunito,sans-serif;display:block}
+/* SOS guide chat uses the Talk to Gee look */
+.gee-sos{background:0 0;border:0;padding:0}
+.gee-sos .gee-chat-hero{margin-bottom:10px}
+.gee-sos__chat{max-height:260px;padding-right:2px;overflow-y:auto}
+.gee-sos .gee-msg--assistant{align-items:flex-end}
+.gee-sos .gee-chat-input{margin-top:10px}
+/* ---------- Emergency guide: one screen, no page scroll, Gee on top ---------- */
+.guide-fit{flex-direction:column;gap:8px;padding-bottom:10px;display:flex;overflow:hidden}
+.guide-fit .app-header{flex-shrink:0;height:62px}
+.guide-gee{text-align:center;flex-direction:column;flex-shrink:0;align-items:center;gap:2px;display:flex}
+.guide-gee .gee-voice-orb--small{width:clamp(74px,11svh,96px);height:clamp(74px,11svh,96px);margin:0 auto 4px}
+.guide-gee .gee-voice-orb--small .buddy{width:72%;height:72%}
+.guide-gee .eyebrow{margin:0}
+.guide-gee .gee-chat-hero__hint{margin:0;font-size:12px}
+.guide-gee .voice-wave--inline{justify-content:center;margin-top:2px}
+.guide-calls{flex-shrink:0;gap:8px;display:flex}
+.guide-fit .guide-call{flex:1;min-height:clamp(46px,6.5svh,56px);margin:0;font-size:18px}
+.guide-text{white-space:nowrap;align-items:center;gap:6px;width:auto;min-height:0;margin:0;padding:0 14px;display:flex}
+.guide-timer--row{flex-shrink:0;justify-content:space-between;align-items:center;gap:10px;margin:0;padding:6px 14px;display:flex}
+.guide-timer--row strong{font-size:22px}
+.guide-timer--row small{text-align:left;line-height:1.3}
+.guide-step--compact{flex-shrink:0;margin:0;padding:10px 12px}
+.guide-step--compact .guide-step__progress{margin-bottom:6px}
+.guide-step__row{grid-template-columns:auto 1fr auto;align-items:center;gap:8px;display:grid}
+.guide-step__row>div{text-align:center}
+.guide-step__row .eyebrow{margin:0;font-size:10px}
+.guide-step--compact h2{margin:0;font-size:clamp(16px,2.4svh,20px);line-height:1.15}
+.guide-step__row button{cursor:pointer;color:var(--ink);background:#fff;border:1px solid var(--border);border-radius:12px;place-items:center;width:36px;height:36px;display:grid}
+.guide-step__row button:disabled{opacity:.35}
+.guide-step--compact .guide-step__body{margin:6px 0 0;font-size:13px;line-height:1.4}
+.guide-step--compact .guide-step__choice{gap:8px;margin-top:8px;display:flex}
+.guide-step--compact .guide-step__choice>*{flex:1;min-height:42px;margin:0;font-size:14px}
+.guide-fit__chat{flex:1;min-height:60px;max-height:none;padding:2px;overflow-y:auto}
+.guide-fit .gee-chat-input{flex-shrink:0;margin:0}
+.guide-fit__err{flex-shrink:0;margin:0}
+.guide-chips{flex-wrap:wrap;flex-shrink:0;justify-content:center;gap:6px;display:flex}
+.guide-chips>*{color:var(--muted);cursor:pointer;background:#fff;border:1px solid var(--border);border-radius:999px;align-items:center;gap:5px;padding:5px 10px;font:700 11px Nunito,sans-serif;display:inline-flex}
+.guide-chips input{accent-color:#b65070;width:13px;height:13px;margin:0}
+.guide-chips .is-on{color:#b65070;background:#fdf0f3;border-color:#efc4d0}
+.guide-fit__disclaimer{text-align:center;flex-shrink:0;margin:0;font-size:9px}
+.guide-chips{flex-wrap:nowrap;gap:4px}.guide-chips>*{white-space:nowrap;padding:5px 8px}
+@media (max-height:720px){
+  .guide-fit{gap:6px}
+  .guide-fit .app-header{height:52px}
+  .guide-gee .gee-voice-orb--small{width:64px;height:64px;margin-bottom:2px}
+  .guide-gee .gee-chat-hero__hint,.guide-gee .voice-wave--inline,.guide-fit__disclaimer{display:none}
+  .guide-fit .guide-call{min-height:44px;font-size:17px}
+  .guide-step--compact{padding:8px 10px}
+  .guide-step--compact .guide-step__body{font-size:12px}
+  .guide-step--compact .guide-step__choice>*{min-height:38px}
+  .guide-fit__chat{min-height:48px}
+}
+/* Talk to Gee: the Gee mic stays pinned at the top while the chat scrolls */
+.gee-chat-screen .gee-chat-hero{z-index:5;background:linear-gradient(#fffcf9 82%,#fffcf900);margin:0 -4px 8px;padding:6px 4px 10px;position:sticky;top:0}
