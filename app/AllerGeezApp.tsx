@@ -8,6 +8,7 @@ import IngredientModal from "./IngredientModal";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
 import CameraCapture from "./CameraCapture";
 import { FoodRadarMap, RestaurantScanner } from "./FoodRadar";
+import type { GeeCard } from "@/lib/gee/tools";
 import { prepareImage } from "./image";
 import { useGeeRecorder } from "./useGeeRecorder";
 import type { FoodProduct, Nutrients } from "@/lib/nutrition";
@@ -49,6 +50,49 @@ function NotFoodCard({ note, isPhoto, onRetake, onChoose, onEdit }: { note?: str
           {onChoose && <button className="secondary-button" onClick={onChoose}><Icon name="image" size={18} /> Choose another photo</button>}
         </>) : onEdit && <button className="primary-button" onClick={onEdit}><Icon name="pen" size={18} /> Edit description</button>}
       </div>
+    </div>
+  );
+}
+
+/** What Gee found with one of its app tools, shown under Gee's reply in Talk to Gee. */
+function GeeToolCard({ card, onOpenRadar, onOpenProfile }: { card: GeeCard; onOpenRadar: () => void; onOpenProfile: () => void }) {
+  if (card.type === "food_check") {
+    const tone = card.verdict === "avoid" ? "avoid" : card.verdict === "ask" ? "ask" : "ok";
+    return (
+      <div className={`gee-card gee-card--${tone}`}>
+        <small className="gee-card__label"><Icon name="flask" size={13} /> Food check</small>
+        <strong>{card.food}: {tone === "avoid" ? "avoid" : tone === "ask" ? "ask first" : "looks OK for you"}</strong>
+        {card.reasons.length > 0 && <p>{card.reasons.slice(0, 3).join(" · ")}</p>}
+        <small>{card.checkedAgainst.length ? `Checked against ${card.checkedAgainst.join(", ")}` : "Add your allergens for a personal check"}</small>
+      </div>
+    );
+  }
+  if (card.type === "safe_nearby") {
+    return (
+      <div className="gee-card">
+        <small className="gee-card__label"><Icon name="radar" size={13} /> Safe food near {card.area.split(",")[0]}</small>
+        {card.places.length === 0 && <p>No menus with safe picks came back yet.</p>}
+        {card.places.map(p => (
+          <div key={p.name} className="gee-card__place">
+            <strong>{p.name}</strong>
+            <small>{p.rating ? `★ ${p.rating}${p.reviews ? ` (${p.reviews.toLocaleString()})` : ""} · ` : ""}{p.miles} mi{p.cuisine ? ` · ${p.cuisine}` : ""}</small>
+            <p>{p.picks.map(d => d.dish).join(" · ")}</p>
+          </div>
+        ))}
+        <button className="inline-link" onClick={onOpenRadar}>Open the full map</button>
+      </div>
+    );
+  }
+  return card.ready ? (
+    <div className="gee-card gee-card--contact">
+      <small className="gee-card__label"><Icon name="message" size={13} /> Message ready</small>
+      <p>“{card.message}”</p>
+      <a className="call-button gee-card__send" href={card.href}><Icon name="message" size={17} /> Text {card.name}</a>
+    </div>
+  ) : (
+    <div className="gee-card gee-card--ask">
+      <small className="gee-card__label"><Icon name="message" size={13} /> No emergency contact yet</small>
+      <button className="inline-link" onClick={onOpenProfile}>Add one in Profile</button>
     </div>
   );
 }
@@ -557,7 +601,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
 
   // ---- Conversation with the Gee agent (Mastra) ----
-  type ChatMsg = { role: "user" | "assistant"; content: string ; held?: boolean };
+  type ChatMsg = { role: "user" | "assistant"; content: string ; held?: boolean; cards?: GeeCard[] };
   type CheckInState = { fields: { symptoms: string[]; timing: string; severity: number | null; food: string; duration: string }; asking: string; done: boolean; irritants: { name: string; confidence: string; evidence: string }[]; source?: string };
   const GREETING = "Hi, I’m Gee. I’m here with you. What are you feeling right now?";
   const [geeChat, setGeeChat] = useState<ChatMsg[]>([]);
@@ -622,7 +666,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
         body: JSON.stringify({ messages: history, threadId: geeThreadId, reactionTime: occurredAt ? new Date(occurredAt).toISOString() : undefined }),
       });
       setGeeThinking(false);
-      updateChat(h => [...h.filter(m => !m.held), { role: "assistant", content: out.reply }, ...h.filter(m => m.held)]);
+      updateChat(h => [...h.filter(m => !m.held), { role: "assistant", content: out.reply, cards: Array.isArray(out.cards) ? out.cards : undefined }, ...h.filter(m => m.held)]);
       setCheckIn({ fields: out.fields, asking: out.asking, done: out.done, irritants: out.likelyIrritants ?? [], source: out.source });
       applyCheckIn(out.fields, userText);
       if (out.emergency) { geeSay(out.reply); setEmergencyOpen(true); return; }
@@ -1248,9 +1292,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
             <div className="gee-chat" aria-live="polite">
               {geeChat.map((m, i) => (
-                <div key={i} className={`gee-msg gee-msg--${m.role}`}>
-                  {m.role === "assistant" && <Buddy small />}
-                  <p>{m.content}</p>
+                <div key={i} className="gee-msg-group">
+                  <div className={`gee-msg gee-msg--${m.role}`}>
+                    {m.role === "assistant" && <Buddy small />}
+                    <p>{m.content}</p>
+                  </div>
+                  {m.cards?.map((c, k) => <GeeToolCard key={k} card={c} onOpenRadar={() => { stopVoice(); go("test-nearby"); }} onOpenProfile={() => { stopVoice(); go("profile"); }} />)}
                 </div>
               ))}
               {(geeThinking || geeBusy) && <div className="gee-msg gee-msg--assistant gee-msg--typing"><Buddy small /><p><i /><i /><i /></p></div>}
