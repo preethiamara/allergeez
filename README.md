@@ -1,4 +1,4 @@
-# AllergyAid
+# Allergeez
 
 Label scanning (Gemini vision), voice-guided reaction mode (ElevenLabs), profiles and reaction logs (Neon).
 
