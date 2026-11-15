@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     const recent = meals
       .filter(m => { const gap = at - new Date(m.createdAt).getTime(); return gap >= -30 * 60e3 && gap <= 8 * 3600e3; })
       .slice(0, 6)
-      .map(m => `- ${m.name} (logged ${new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}; ${m.ingredients.map(i => i.name).slice(0, 8).join(", ") || m.details})`);
+      .map(m => `- ${m.name} (logged ${new Date(m.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}; ingredients: ${m.ingredients.map(i => i.name).slice(0, 8).join(", ") || m.details}${m.flags.length ? `; allergy groups, additives & natural triggers: ${m.flags.join(", ")}` : ""})`);
     const briefing = [
       `The check-in started at ${now}.`,
       `Known allergens: ${profile.allergens.join(", ") || "none listed"}.`,
