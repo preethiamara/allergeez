@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import { cleanIngredients, listMeals, toMeal } from "@/lib/records";
+import { ingredientsOnly } from "@/lib/ingredients";
 import { getActor } from "@/lib/session";
 
 const fail = (e: any, what: string) => {
@@ -19,7 +20,8 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => null);
     const details = String(body?.details ?? "").trim().slice(0, 4000);
     const name = String(body?.name ?? "").trim().slice(0, 80) || "New meal";
-    const ingredients = cleanIngredients(body?.ingredients);
+    // Ingredients only (no product or dish names), so irritant detection compares real ingredients
+    const ingredients = ingredientsOnly(cleanIngredients(body?.ingredients), name);
     // When it was eaten: any past time is fine; missing, invalid or future times mean "now"
     const t = body?.eatenAt ? new Date(String(body.eatenAt)) : null;
     const eatenAt = t && !isNaN(t.getTime()) && t.getTime() <= Date.now() + 5 * 60e3 ? t.toISOString() : new Date().toISOString();

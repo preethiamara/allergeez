@@ -45,14 +45,31 @@ export function Icon({ name, size = 22, strokeWidth = 1.8 }: { name: IconName; s
   );
 }
 
-export function Buddy({ small = false }: { small?: boolean }) {
+export type BuddyVariant = "default" | "wave" | "boxing" | "cookie";
+const BUDDY: Record<BuddyVariant, [string, string]> = {
+  default: ["/mascots/gee-default.png", "Gee, your friendly smiling heart"],
+  wave: ["/mascots/gee-wave.png", "Gee winking and waving hello"],
+  boxing: ["/mascots/gee-boxing.png", "Gee ready to fight allergies with boxing gloves"],
+  cookie: ["/mascots/gee-cookie.png", "Gee eating a cookie"],
+};
+
+/** Gee, the heart mascot. */
+export function Buddy({ small = false, variant = "default", className = "" }: { small?: boolean; variant?: BuddyVariant; className?: string }) {
+  const [src, alt] = BUDDY[variant];
+  const cls = ["buddy", small ? "buddy--small" : "", variant !== "default" ? `buddy--${variant}` : "", className].filter(Boolean).join(" ");
+  return <img className={cls} src={src} alt={alt} draggable={false} />;
+}
+
+export type SafetyStatus = "safe" | "caution" | "warning";
+/** The colored Gee heart with a "% safe" badge used by Test a food. */
+export function SafetyHeart({ percentage, status }: { percentage: number; status: SafetyStatus }) {
+  const src = status === "safe" ? "/mascots/gee-safety-safe.png" : status === "caution" ? "/mascots/gee-safety-caution.png" : "/mascots/gee-safety-warning.png";
+  const alt = status === "safe" ? "Green Gee: looks safe" : status === "caution" ? "Yellow Gee: use caution" : "Red Gee: allergen warning";
   return (
-    <svg className={small ? "buddy buddy--small" : "buddy"} viewBox="0 0 108 96" role="img" aria-label="Gee, your friendly smiling heart">
-      <path d="M54 89C43 79 13 61 13 35 13 17 35 10 48 25l6 8 6-8c13-15 35-8 35 10 0 26-30 44-41 54Z" fill="#F4A8BD" stroke="#5B3A43" strokeWidth="3.5" strokeLinejoin="round" />
-      <path d="M38 44v1M70 44v1" stroke="#5B3A43" strokeWidth="5" strokeLinecap="round" />
-      <path d="M44 58c6 6 14 6 20 0" fill="none" stroke="#5B3A43" strokeWidth="3.5" strokeLinecap="round" />
-      <path d="M25 53c-7-2-10 1-12 5M83 53c7-2 10 1 12 5" fill="none" stroke="#5B3A43" strokeWidth="3" strokeLinecap="round" />
-    </svg>
+    <div className="safety-heart-container">
+      <img src={src} alt={alt} className="safety-heart-img" draggable={false} />
+      <div className="safety-heart-badge"><strong>{percentage}%</strong><small>Safe</small></div>
+    </div>
   );
 }
 
@@ -67,24 +84,9 @@ export function GoogleLogo({ size = 18 }: { size?: number }) {
   );
 }
 
-/** Gee sitting in a bowl with a spoon (shown after a meal is saved). */
-export function BuddyInBowl() {
-  return (
-    <svg className="buddy-in-bowl" viewBox="0 0 160 144" role="img" aria-label="Gee sitting in a bowl with a spoon">
-      <path d="M106 70 L134 22 C136 18 143 21 141 26 L115 76" fill="#EDE5DF" stroke="#5B3A43" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
-      <ellipse cx="106" cy="72" rx="9" ry="13" transform="rotate(30 106 72)" fill="#EDE5DF" stroke="#5B3A43" strokeWidth="3.2" />
-      <path d="M80 96 C68 84 32 66 32 40 C32 22 52 15 64 28 L80 42 L96 28 C108 15 128 22 128 40 C128 66 92 84 80 96 Z" fill="#F4A8BD" stroke="#5B3A43" strokeWidth="3.5" strokeLinejoin="round" />
-      <path d="M66 50v1M94 50v1" stroke="#5B3A43" strokeWidth="5" strokeLinecap="round" />
-      <path d="M72 62c5 5 11 5 16 0" fill="none" stroke="#5B3A43" strokeWidth="3.5" strokeLinecap="round" />
-      <circle cx="58" cy="56" r="3" fill="#EE94AA" opacity="0.65" />
-      <circle cx="102" cy="56" r="3" fill="#EE94AA" opacity="0.65" />
-      <path d="M44 64c-5 3-9 9-6 16M116 64c5 3 9 9 6 16" fill="none" stroke="#5B3A43" strokeWidth="3" strokeLinecap="round" />
-      <path d="M18 78 C20 114 44 134 80 134 C116 134 140 114 142 78 Z" fill="#FFFDFB" stroke="#5B3A43" strokeWidth="3.5" strokeLinejoin="round" />
-      <path d="M54 134 C54 140 106 140 106 134" fill="none" stroke="#5B3A43" strokeWidth="3.5" strokeLinecap="round" />
-      <path d="M18 78 C18 73 142 73 142 78 C142 83 18 83 18 78 Z" fill="#FFF3EE" stroke="#5B3A43" strokeWidth="3.2" strokeLinejoin="round" />
-      <path d="M36 78 c0 -4 8 -4 8 0 M116 78 c0 -4 8 -4 8 0" fill="#F4A8BD" stroke="#5B3A43" strokeWidth="2.8" strokeLinecap="round" />
-    </svg>
-  );
+/** Gee with a cookie (shown after a meal is saved). */
+export function BuddyInBowl({ className = "" }: { className?: string }) {
+  return <Buddy variant="cookie" className={`buddy-in-bowl ${className}`.trim()} />;
 }
 
 export function AppHeader({ title, onBack, onEmergency, right }: { title: string; onBack?: () => void; onEmergency?: () => void; right?: ReactNode }) {
