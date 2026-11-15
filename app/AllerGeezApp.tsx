@@ -12,6 +12,7 @@ import type { FoodProduct, Nutrients } from "@/lib/nutrition";
 import { allergenMatches, allergyGroup } from "@/lib/allergens";
 import { attackTag, detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 import { findLikelyIrritants } from "@/lib/irritants";
+import { matchesUserList, type Additive, type NaturalTrigger } from "@/lib/additives";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
@@ -24,8 +25,40 @@ type ScanResult = {
   name?: string; ingredients?: string[]; flags?: { ingredient: string; allergen: string; reason: string }[];
   product?: { brand?: string; name?: string } | null; barcode?: string;
   nutrition_estimate?: NutritionEstimate | null;
+  additives?: Additive[]; natural_triggers?: NaturalTrigger[];
   common_allergens?: string[]; safe?: boolean; note?: string;
 };
+
+const TRIGGER_LABEL: Record<string, string> = { histamine: "Histamine", nickel: "Nickel", salicylates: "Salicylates", tyramine: "Tyramine" };
+
+/** Additives and naturally occurring triggers, folded into one small line so the ingredient notes stay clean. */
+function ExtrasLine({ additives = [], triggers = [], allergens }: { additives?: Additive[]; triggers?: NaturalTrigger[]; allergens: string[] }) {
+  if (!additives.length && !triggers.length) return null;
+  const groups = [...new Set(additives.map(a => a.group))];
+  const summary = [
+    additives.length ? `${additives.length} additive${additives.length > 1 ? "s" : ""}` : "",
+    triggers.length ? `high in ${triggers.map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger).join(", ").toLowerCase()}` : "",
+  ].filter(Boolean).join(" · ");
+  const anyYours = additives.some(a => matchesUserList(allergens, a)) || triggers.some(t => matchesUserList(allergens, { trigger: t.trigger }));
+  return (
+    <details className={`extras ${anyYours ? "extras--yours" : ""}`}>
+      <summary><Icon name="flask" size={13} /> {summary}{anyYours && <em>includes yours</em>}</summary>
+      <div className="extras__body">
+        {groups.map(g => (
+          <p key={g}><strong>{g}</strong>{additives.filter(a => a.group === g).map(a => (
+            <span key={a.name} className={matchesUserList(allergens, a) ? "is-yours" : ""}>{a.name}{a.e && !a.name.includes(a.e) ? ` · ${a.e}` : ""}</span>
+          ))}</p>
+        ))}
+        {triggers.map(t => (
+          <p key={t.trigger}><strong>Naturally high in {TRIGGER_LABEL[t.trigger] ?? t.trigger}</strong>
+            <span className={matchesUserList(allergens, { trigger: t.trigger }) ? "is-yours" : ""}>{t.foods.join(", ") || "this food"}</span>
+          </p>
+        ))}
+        <small>Considered for your allergen alerts and irritant patterns. Not added to your ingredient notes.</small>
+      </div>
+    </details>
+  );
+}
 
 function EstimateCard({ est, title }: { est: NutritionEstimate; title: string }) {
   const rows: [keyof NutritionEstimate, string, string][] = [
@@ -285,8 +318,13 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     const mineUnique = groups(dedupe(mine));
     const common = groups(dedupe([...(r?.common_allergens ?? []).map(a => a.toLowerCase()), ...fromFoods, ...extraGroups], mine))
       .filter(g => !mineUnique.includes(g) && !allergens.some(p => allergyGroup(p) === g));
-    const mineAll = [...new Set([...mineUnique, ...extraGroups.map(allergyGroup).filter(g => allergens.some(p => allergyGroup(p) === g))])];
-    return { mine: mineAll, common };
+    // Additives and natural triggers that are on the user's list (e.g. "Sulfites", "Histamine")
+    const extrasMine = [
+      ...(r?.additives ?? []).filter(a => matchesUserList(allergens, a)).map(a => a.group),
+      ...(r?.natural_triggers ?? []).filter(t => matchesUserList(allergens, { trigger: t.trigger })).map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger),
+    ];
+    const mineAll = [...new Set([...mineUnique, ...extrasMine, ...extraGroups.map(allergyGroup).filter(g => allergens.some(p => allergyGroup(p) === g))])];
+    return { mine: mineAll, common: common.filter(g => !mineAll.includes(g)) };
   }, [scan.result, selectedFoods, allergens, extraGroups]);
   const addGroup = () => {
     const g = (groupDraft ?? "").trim();
@@ -304,7 +342,8 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
         method: "POST",
         body: JSON.stringify({
           name: scan.result?.name || (fallback.length > 34 ? "New meal" : fallback), details,
-          flags: [...mealFlags.mine, ...mealFlags.common],
+          flags: [...new Set([...mealFlags.mine, ...mealFlags.common,
+            ...(scan.result?.additives ?? []).map(a => a.group), ...(scan.result?.natural_triggers ?? []).map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger)])],
           ingredients: [...foodNames, ...(scan.result?.ingredients ?? [])].slice(0, 40).map(name => ({ name, flagged: false })),
         }),
       });
@@ -921,6 +960,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                       </form>
                     )}
                   </div>
+                  <ExtrasLine additives={scan.result?.additives} triggers={scan.result?.natural_triggers} allergens={allergens} />
                   {scan.result?.note && <p className="ai-card__note">{scan.result.note}</p>}
                   {scan.error && (
                     <p className="save-error">{scan.error} <button className="inline-link" onClick={() => runScan(lastScanInput.current)}>Try again</button></p>
@@ -1485,6 +1525,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                       {mealFlags.common.map(a => <span key={a}>Possible: {a}</span>)}
                       {scan.result && !mealFlags.mine.length && !mealFlags.common.length && <span>No common allergens spotted</span>}
                     </div>
+                    <ExtrasLine additives={scan.result?.additives} triggers={scan.result?.natural_triggers} allergens={allergens} />
                     {scan.result?.note && <p className="ai-card__note">{scan.result.note}</p>}
                     {scan.error && <p className="save-error">{scan.error} <button className="inline-link" onClick={() => runScan(lastScanInput.current)}>Try again</button></p>}
                   </div>

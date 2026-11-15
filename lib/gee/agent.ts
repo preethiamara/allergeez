@@ -88,7 +88,8 @@ HOW TO TALK:
 5. When symptoms, timing, severity and food are known (duration is nice to have): call find-likely-irritants ONCE with the food, then reply with a one-sentence summary and at most two likely irritants with their confidence (say "early guess" when confidence is low), and tell them they can review and save it.
 Do not call any tool more than once per turn. Never call a tool before you know what they ate.
 6. If they say they don't know or don't want to answer, accept it, mark that field "unknown", and move on.
-7. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
+7. Consider more than the big allergens: food additives (sulfites, colorings like Red 40, MSG, preservatives, sweeteners) and compounds foods are naturally high in (histamine, nickel, salicylates, tyramine). The briefing lists these for each recent meal. If one of the user's known allergens is among them, mention it briefly.
+8. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
   // Fast model first; fall back if it's rate-limited or slow
   model: [
     { model: `google/${process.env.GEMINI_MODEL || "gemini-3.1-flash-lite"}`, maxRetries: 1 },

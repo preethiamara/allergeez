@@ -1,4 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
+import { detectAdditives, detectNaturalTriggers, matchesUserList } from "@/lib/additives";
+import { allergenMatches } from "@/lib/allergens";
 
 // gemini-2.5-flash is no longer available to new API keys, so try current models in order.
 // Override with GEMINI_MODEL in .env.local if needed.
@@ -50,6 +52,9 @@ For "packaged", fill "product" with the brand and product name exactly as printe
 List the likely ingredients (for dishes include typical hidden ingredients like sauces, butter, flour, nuts in pesto; for labels read them exactly).
 Flag any that match the user's allergens, INCLUDING hidden names (casein, whey, albumin, tahini, lecithin, etc.) and "may contain" / cross-contact warnings.
 List common major allergens it likely contains even if the user did not list them, as "common_allergens" (lowercase: "dairy", "wheat", "peanut", "egg", "soy", "sesame", "shellfish", "tree nut", "fish").
+List every food additive separately in "additives" (preservatives, colorings, sweeteners, flavor enhancers, thickeners, emulsifiers), with the common name, the group, and the E-number if known. For labels, include every additive printed; for dishes, only ones very likely present (e.g. sulfites in wine, nitrites in bacon). Keep additives in "ingredients" too, exactly as printed.
+List "natural_triggers": compounds the food is naturally high in that some people react to by eating ("histamine", "nickel", "salicylates", "tyramine"), with the foods responsible. Only include clear cases.
+The user's allergens can include additives or natural compounds (e.g. "sulfites", "red dye 40", "msg", "histamine", "nickel"): flag those too, matching label names and E-numbers (e.g. sodium metabisulfite / E223 → sulfites, Allura Red / E129 → red dye 40, E621 → msg).
 For "homemade" and "restaurant", estimate nutrition for the portion shown in "nutrition_estimate" (numbers only; null if you can't tell). For other kinds set "nutrition_estimate" to null.
 
 Return JSON only:
@@ -57,6 +62,8 @@ Return JSON only:
  "product": {"brand": string, "name": string} | null, "barcode": string,
  "ingredients": string[], "flags": [{"ingredient": string, "allergen": string, "reason": string}],
  "common_allergens": string[],
+ "additives": [{"name": string, "group": string, "e": string}],
+ "natural_triggers": [{"trigger": string, "foods": string[]}],
  "nutrition_estimate": {"portion": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "sugars": number, "fiber": number, "sodiumMg": number} | null,
  "safe": boolean, "note": string (one friendly sentence)}
 If the input is not food or is unreadable, use kind "not_food", empty lists, safe false, and explain in note.
@@ -71,7 +78,50 @@ If unsure, set safe to false. Informational only, not medical advice.${descripti
           config: { responseMimeType: "application/json" },
         }), ATTEMPT_TIMEOUT_MS);
         const out = parseJson(res.text ?? "{}");
-        return Response.json({ kind: "homemade", name: "", product: null, barcode: "", ingredients: [], flags: [], common_allergens: [], nutrition_estimate: null, safe: false, note: "", ...out, model });
+        const result = { kind: "homemade", name: "", product: null, barcode: "", ingredients: [], flags: [], common_allergens: [], nutrition_estimate: null, safe: false, note: "", ...out, model };
+        // Only keep "your allergen" flags that really match something on the user's list (the model sometimes over-flags)
+        const NATURAL = ["histamine", "nickel", "salicylates", "tyramine"];
+        const geminiTriggerFoods = (Array.isArray(out.natural_triggers) ? out.natural_triggers : []) as { trigger?: string; foods?: string[] }[];
+        result.flags = (Array.isArray(result.flags) ? result.flags : []).filter((f: any) => {
+          const a = String(f?.allergen ?? ""), ing = String(f?.ingredient ?? "");
+          const onList = list.some(p => allergenMatches(p, a) || allergenMatches(p, ing)) || matchesUserList(list, { name: `${a} ${ing}` });
+          if (!onList) return false;
+          // Natural-compound flags need a real high source (e.g. aged cheese → histamine), not any ingredient
+          const trig = NATURAL.find(t => a.toLowerCase().includes(t.replace(/s$/, "")));
+          if (!trig) return true;
+          const ingL = ing.toLowerCase();
+          return detectNaturalTriggers([ing]).some(t => t.trigger === trig)
+            || geminiTriggerFoods.some(t => String(t.trigger).toLowerCase() === trig && (t.foods ?? []).some(fd => ingL.includes(String(fd).toLowerCase()) || String(fd).toLowerCase().includes(ingL)));
+        });
+        // Double-check Gemini with the built-in additive / trigger lists, and merge
+        const texts = [...(Array.isArray(result.ingredients) ? result.ingredients : []), result.name, description].filter(Boolean).map(String);
+        const additives = new Map<string, { name: string; group: string; e?: string }>();
+        const title = (g: string) => g.trim().replace(/\b\w/g, c => c.toUpperCase());
+        // Built-in list first: its groups are reliable (e.g. sodium metabisulfite → Sulfites, not "Preservatives")
+        for (const a of [...detectAdditives(texts), ...(Array.isArray(out.additives) ? out.additives : [])]) {
+          const name = String(a?.name ?? "").trim();
+          if (!name) continue;
+          const key = (a.e ? String(a.e).toUpperCase().replace(/\s/g, "") : name.toLowerCase());
+          if (![...additives.values()].some(x => (x.e && a.e && x.e.toUpperCase().replace(/\s/g, "") === key) || x.name.toLowerCase() === name.toLowerCase()))
+            additives.set(key, { name, group: title(String(a.group || "Additives")), e: a.e ? String(a.e).toUpperCase().replace(/\s/g, "") : undefined });
+        }
+        const triggers = new Map<string, Set<string>>();
+        for (const t of [...(Array.isArray(out.natural_triggers) ? out.natural_triggers : []), ...detectNaturalTriggers(texts)]) {
+          const name = String(t?.trigger ?? "").toLowerCase().trim();
+          if (!["histamine", "nickel", "salicylates", "tyramine"].includes(name)) continue;
+          const set = triggers.get(name) ?? new Set<string>();
+          (Array.isArray(t.foods) ? t.foods : []).forEach((f: unknown) => set.add(String(f).toLowerCase()));
+          triggers.set(name, set);
+        }
+        return Response.json({
+          ...result,
+          additives: [...additives.values()].slice(0, 20),
+          // Keep the most specific food names ("aged cheddar cheese", not also "cheddar")
+          natural_triggers: [...triggers.entries()].map(([trigger, foods]) => {
+            const list = [...foods];
+            return { trigger, foods: list.filter(f => !list.some(o => o !== f && o.includes(f))).slice(0, 4) };
+          }),
+        });
       } catch (e: any) {
         lastErr = e;
         const msg = String(e?.message ?? e);
