@@ -13,7 +13,7 @@ process.env.GOOGLE_GENERATIVE_AI_API_KEY ||= process.env.GEMINI_API_KEY;
 
 type Ctx = { userId: string; reactionTime: string };
 const ctxOf = (context: any): Ctx => ({
-  userId: context?.requestContext?.get("userId") ?? "demo",
+  userId: context?.requestContext?.get("userId") ?? "guest-unknown",
   reactionTime: context?.requestContext?.get("reactionTime") ?? new Date().toISOString(),
 });
 

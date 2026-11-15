@@ -1,23 +1,34 @@
+import { cookies } from "next/headers";
 import { sql } from "@/lib/db";
 import { getSessionUser, type SessionUser } from "@/lib/auth/server";
+import { GUEST_COOKIE, GUEST_COOKIE_MAX_AGE, guestUserId, isGuestToken } from "@/lib/guest";
 
-/** Data owner for signed-out use (shared on this device/demo, like before login existed). */
-export const GUEST_ID = "demo";
+/** This browser's private guest profile id (set by proxy.ts; created here if an API is called first). */
+async function guestId(): Promise<string> {
+  const jar = await cookies();
+  let token = jar.get(GUEST_COOKIE)?.value;
+  if (!isGuestToken(token)) {
+    token = crypto.randomUUID();
+    // Allowed in API routes; page renders can't set cookies (proxy.ts covers those)
+    try { jar.set(GUEST_COOKIE, token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: GUEST_COOKIE_MAX_AGE, secure: process.env.NODE_ENV === "production" }); } catch {}
+  }
+  return guestUserId(token);
+}
 
 /**
- * Who owns the data for this request: the signed-in account, or the shared guest profile.
- * The first time an account signs in with no data of its own, it takes over the guest data
+ * Who owns the data for this request: the signed-in account, or this browser's private guest profile.
+ * The first time an account signs in with no data of its own, it takes over this browser's guest data
  * so nothing logged before signing in is lost.
  */
 export async function getActor(): Promise<{ userId: string; user: SessionUser | null }> {
-  const user = await getSessionUser();
-  if (!user) return { userId: GUEST_ID, user: null };
-  await claimGuestData(user.id);
+  const [user, guest] = await Promise.all([getSessionUser(), guestId()]);
+  if (!user) return { userId: guest, user: null };
+  await claimGuestData(user.id, guest);
   return { userId: user.id, user };
 }
 
 const claimed = new Set<string>();
-async function claimGuestData(userId: string) {
+async function claimGuestData(userId: string, GUEST_ID: string) {
   if (claimed.has(userId)) return;
   claimed.add(userId);
   try {
