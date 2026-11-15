@@ -139,29 +139,16 @@ export async function POST(req: Request) {
       const [key, toolId] = TOOLS[req.type];
       const args: any = req.type === "check_food" ? { food: req.food } : req.type === "find_safe_food" ? { place: req.place, craving: req.food || undefined } : { message: req.message || "I'm having an allergic reaction. Can you call me?" };
       let result: any = null, reply = "", toolUsed = false;
+      // Gee calls the tool right away (one fast agent step, tool call required); the reply is phrased from its result below
       try {
         const step = await withTimeout(geeAgent.generate(
           [{ role: "system", content: briefing }, ...messages,
-           { role: "user", content: `(App note: they asked for this. Call ${toolId} with ${JSON.stringify(args)} exactly once, then reply in 1–2 short spoken sentences using only the tool's result.${!out.done && out.asking !== "none" ? ` Then ask your next check-in question (${out.asking}).` : ""})` }] as any,
-          { requestContext: ctx, maxSteps: 3, toolChoice: "auto" },
-        ), req.type === "find_safe_food" ? 50_000 : 20_000) as any;
+           { role: "user", content: `(App note: call ${toolId} with ${JSON.stringify(args)}.)` }] as any,
+          { requestContext: ctx, maxSteps: 1, toolChoice: { type: "tool", toolName: key } },
+        ), req.type === "find_safe_food" ? 50_000 : 12_000) as any;
         result = (step.toolResults ?? []).map((t: any) => t.result ?? t.payload?.result).find((x: any) => x && "card" in x) ?? null;
         toolUsed = !!result;
-        reply = String(step.text ?? "").trim();
       } catch (e: any) { console.warn("[gee] app tool step failed:", String(e?.message ?? e).slice(0, 160)); }
-      // The model answered without calling it: ask the agent again, this time required to call that tool
-      if (!result) {
-        try {
-          const forced = await withTimeout(geeAgent.generate(
-            [{ role: "system", content: briefing }, ...messages,
-             { role: "user", content: `(App note: call ${toolId} with ${JSON.stringify(args)}.)` }] as any,
-            { requestContext: ctx, maxSteps: 1, toolChoice: { type: "tool", toolName: key } },
-          ), req.type === "find_safe_food" ? 50_000 : 15_000) as any;
-          result = (forced.toolResults ?? []).map((t: any) => t.result ?? t.payload?.result).find((x: any) => x && "card" in x) ?? null;
-          toolUsed = !!result;
-          if (result) reply = ""; // the template below phrases the answer from the tool's result
-        } catch (e: any) { console.warn("[gee] forced tool step failed:", String(e?.message ?? e).slice(0, 160)); }
-      }
       // Still nothing (AI down / timed out): run the same tool directly so the person still gets an answer
       if (!result) {
         try { result = await (appTools[key].execute as any)(args, { requestContext: ctx }); } catch (e) { console.warn("[gee] direct tool call failed:", e); }
@@ -173,6 +160,13 @@ export async function POST(req: Request) {
             ? (result.places?.length ? `Try ${result.places[0].name}: ${result.places[0].picks[0]?.dish} looks safe for you. I put a few options below.` : result.message)
             : (result.ready ? `I wrote a message to ${result.contactName}. Tap the button to send it.` : result.message);
       }
+      // Then carry on with the check-in question Gee had planned
+      const NEXT: Record<string, string> = {
+        symptoms: "Now, what are you feeling, and where?", detail: "Can you tell me a bit more about what you're feeling?",
+        timing: "When did it start?", severity: "How bad is it, from 1 to 10?", food: "What did you eat before it started?", duration: "Is it still happening?",
+      };
+      const nextQ = !out.done ? NEXT[out.asking] ?? "" : "";
+      if (reply && nextQ && !reply.includes(nextQ)) reply = `${reply} ${nextQ}`;
       const cards: GeeCard[] = result?.card ? [result.card] : [];
       return respond({ ...out, reply: reply || out.reply, cards, toolUsed, source: "mastra" });
     }
