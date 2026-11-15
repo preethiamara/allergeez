@@ -596,3 +596,71 @@ h1{font-size:27px}
 .mini-spinner{width:16px;height:16px;border:2.5px solid #ffffff80;border-top-color:#fff;border-radius:50%;animation:.8s linear infinite spin}
 @keyframes spin{to{transform:rotate(360deg)}}
 .allergen-check button.allergen-override{border:1px solid #e9b9b6}
+
+/* Talk to Gee: ElevenLabs voice */
+.gee-voice-orb:disabled{cursor:wait;opacity:.85}
+.gee-voice-orb.is-speaking{box-shadow:0 0 0 10px #f9e3e9,0 0 0 22px #fbf0f3}
+.gee-reply{display:flex;align-items:flex-start;gap:10px;margin:16px 0 4px;padding:12px 14px;border-radius:18px;background:#fff;border:1px solid #f0d6de;text-align:left;box-shadow:0 6px 18px #5130390d}
+.gee-reply .buddy--small{width:30px;flex:none}
+.gee-reply p{flex:1;font-size:13px;line-height:1.5;color:var(--ink)}
+.gee-reply button{display:grid;place-items:center;width:30px;height:30px;flex:none;border:1px solid var(--border);border-radius:50%;background:#fff;color:#b65070;cursor:pointer}
+.gee-reply.is-speaking{border-color:var(--pink)}
+.gee-mute{display:inline-flex;align-items:center;gap:6px;margin-top:10px;color:var(--muted);font-size:11px}
+.gee-credit{text-align:center;color:#b3a4a8;font-size:10px;margin-top:6px}
+
+/* Talk to Gee: conversation */
+.gee-chat-screen{display:flex;flex-direction:column}
+.gee-chat-screen>*{flex-shrink:0}
+.gee-chat-hero{display:flex;align-items:center;gap:14px;margin:4px 0 12px}
+.gee-voice-orb--small{width:84px;height:84px;flex:none}
+.gee-voice-orb--small .buddy{width:56px}
+.gee-voice-orb--small .gee-microphone{width:30px;height:30px;right:-2px;bottom:-2px}
+.gee-chat-hero .eyebrow{margin-bottom:2px}
+.gee-chat-hero__hint{color:var(--muted);font-size:12px;line-height:1.4}
+.voice-wave--inline{justify-content:flex-start;margin-top:6px;height:30px}
+.gee-chat{display:flex;flex-direction:column;gap:9px;max-height:300px;overflow-y:auto;padding:4px 2px 8px}
+.gee-msg{display:flex;align-items:flex-end;gap:7px;max-width:88%}
+.gee-msg p{padding:10px 13px;border-radius:18px;font-size:13px;line-height:1.45}
+.gee-msg--assistant{align-self:flex-start}
+.gee-msg--assistant .buddy--small{width:26px;flex:none}
+.gee-msg--assistant p{background:#fff;border:1px solid #f0d6de;border-bottom-left-radius:6px;color:var(--ink)}
+.gee-msg--user{align-self:flex-end}
+.gee-msg--user p{background:var(--pink);color:#fff;border-bottom-right-radius:6px}
+.gee-msg--typing p{display:flex;gap:4px;padding:13px 14px}
+.gee-msg--typing p i{width:7px;height:7px;border-radius:50%;background:#d9b3c0;animation:1s ease-in-out infinite alternate tag-pulse}
+.gee-msg--typing p i:nth-child(2){animation-delay:.2s}.gee-msg--typing p i:nth-child(3){animation-delay:.4s}
+.gee-chat-input{display:flex;gap:8px;margin:6px 0 14px}
+.gee-chat-input input{flex:1;min-height:46px;border:1px solid var(--border);border-radius:16px;padding:0 14px;font-size:13px;color:var(--ink);background:#fff}
+.gee-chat-input input:focus{outline:0;border-color:var(--pink)}
+.gee-chat-input button{width:46px;border:0;border-radius:16px;background:var(--pink);color:#fff;display:grid;place-items:center;cursor:pointer}
+.gee-chat-input button:disabled{opacity:.4;cursor:default}
+.checkin-progress li.is-got i{background:#e6f1e1;color:#4a6b52}
+.checkin-progress li.is-asking i{background:var(--pink-soft);color:#b65070;animation:1.2s ease-in-out infinite alternate tag-pulse}
+.checkin-progress li span{text-transform:none}
+.irritant-card{background:#fff;border:1.5px solid #f0c6d2;border-radius:22px;padding:16px;margin:12px 0}
+.irritant-card__head{display:flex;align-items:center;gap:8px;color:#b65070;margin-bottom:10px}
+.irritant-card__head strong{color:var(--ink);font:800 15px Nunito,sans-serif}
+.irritant-card__head small{margin-left:auto;color:var(--muted);font-size:10px}
+.irritant-card ul{list-style:none;display:grid;gap:8px}
+.irritant-card li{display:flex;align-items:flex-start;gap:9px}
+.irritant-card li strong{display:block;font:800 13px Nunito,sans-serif}
+.irritant-card li small{color:var(--muted);font-size:11px;line-height:1.4}
+.irritant-card p{color:var(--muted);font-size:12px}
+.irritant-badge{flex:none;border-radius:8px;padding:3px 7px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.4px}
+.irritant-badge--high{background:var(--red);color:#fff}
+.irritant-badge--medium{background:#f6d7b8;color:#7a4b1d}
+.irritant-badge--low{background:#f1ebe9;color:#806c72}
+.gee-chat-options{display:flex;justify-content:center;gap:18px;margin-top:10px;color:var(--muted);font-size:11px}
+.gee-chat-options label{display:inline-flex;align-items:center;gap:5px}
+
+/* Allergens: ranked likely irritants */
+.irritant-list__label{display:flex;align-items:center;gap:6px;color:#b65070;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;margin:4px 2px 2px}
+.allergen-list article.irritant-row{display:flex;align-items:flex-start;gap:10px}
+.irritant-row>div{flex:1;min-width:0}
+.irritant-row strong{display:block}
+.irritant-meter{display:block;height:5px;border-radius:4px;background:#f3e9e6;margin-top:7px;overflow:hidden}
+.irritant-meter i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#f0a7ba,var(--red))}
+.irritant-add{display:grid;place-items:center;width:30px;height:30px;flex:none;border:1px dashed #dbaaba;border-radius:10px;background:#fff;color:#b65070;cursor:pointer}
+.irritant-how{color:#a99599;font-size:10px;line-height:1.5;margin:4px 4px 0}
+.clue-list{list-style:none;display:grid;gap:7px;margin:8px 0 2px}
+.clue-list li{font-size:11px;line-height:1.45;color:#6d5a60}

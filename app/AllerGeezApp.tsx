@@ -7,9 +7,11 @@ import ProfileScreen, { initialsOf } from "./ProfileScreen";
 import IngredientModal from "./IngredientModal";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
 import CameraCapture from "./CameraCapture";
+import { useGeeRecorder } from "./useGeeRecorder";
 import type { FoodProduct, Nutrients } from "@/lib/nutrition";
 import { allergenMatches, allergyGroup } from "@/lib/allergens";
-import { attackTag, detectSymptoms, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
+import { attackTag, detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
+import { findLikelyIrritants } from "@/lib/irritants";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
@@ -124,6 +126,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   user: SessionUser | null; initialMeals: Meal[]; initialReactions: Reaction[]; initialProfile: Profile; loadError?: string;
 }) {
   const [screen, setScreen] = useState<Screen>("home");
+  const screenRef = useRef<Screen>("home"); screenRef.current = screen;
   const [emergencyOpen, setEmergencyOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState(loadError ?? "");
@@ -351,7 +354,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   // ---------- reactions ----------
   const startReaction = () => {
     setSymptoms(""); setSeverity(4); setOccurredAt(localNow()); setDuration(""); setMealName(""); setReactionPhoto(undefined); setVoiceMsg("");
-    setReactionAI(null); setReactionTag("");
+    setReactionAI(null); setReactionTag(""); setGeeChat([]); setCheckIn(null); setChatInput("");
     go("reaction-form");
   };
 
@@ -364,9 +367,9 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     const r = new FileReader(); r.onload = () => setReactionPhoto(String(r.result)); r.readAsDataURL(file);
   }
 
-  async function analyzeSymptoms(text: string) {
+  async function analyzeSymptoms(text: string): Promise<any | null> {
     const t = text.trim();
-    if (!t) return;
+    if (!t) return null;
     const id = ++analyzeSeq.current;
     // Show the instant keyword guess while Gemini works
     const quick = detectSymptoms(t);
@@ -377,8 +380,10 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
       if (id !== analyzeSeq.current) return;
       setReactionAI({ loading: false, tag: out.tag, symptoms: out.symptoms, timing: out.timing, intensity: out.intensity, food: out.food, source: out.source, forText: t });
       setReactionTag(out.tag);
+      return out;
     } catch {
       if (id === analyzeSeq.current) setReactionAI(a => ({ ...(a ?? {}), loading: false }));
+      return null;
     }
   }
 
@@ -406,7 +411,128 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   }
 
   // ---------- voice (browser speech recognition) ----------
+  // ---------- Talk to Gee: ElevenLabs speech-to-text in, ElevenLabs voice out ----------
+  const [geeMuted, setGeeMuted] = useState(false);
+  const [geeSpeaking, setGeeSpeaking] = useState(false);
+  const [geeReply, setGeeReply] = useState("");
+  const geeAudio = useRef<HTMLAudioElement | null>(null);
+  const geeMutedRef = useRef(geeMuted); geeMutedRef.current = geeMuted;
+  const transcriptRef = useRef(""); transcriptRef.current = symptoms;
+  const voiceTextRef = useRef(""); // last transcript that came from voice (already analyzed)
+
+  // Call inside a tap so mobile browsers allow Gee's reply to play later
+  const unlockGeeAudio = () => {
+    try { geeAudio.current ??= new Audio(); geeAudio.current.muted = true; geeAudio.current.play().catch(() => {}); geeAudio.current.pause(); geeAudio.current.muted = false; } catch {}
+  };
+  async function geeSay(text: string, after?: () => void) {
+    setGeeReply(text);
+    const done = () => { setGeeSpeaking(false); after?.(); };
+    if (geeMutedRef.current) { after?.(); return; }
+    try {
+      const r = await fetch("/api/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      if (!r.ok) throw new Error("tts");
+      const url = URL.createObjectURL(await r.blob());
+      geeAudio.current ??= new Audio();
+      const a = geeAudio.current;
+      a.src = url; a.onended = done;
+      setGeeSpeaking(true);
+      await a.play();
+    } catch {
+      setGeeSpeaking(false);
+      try { const u = new SpeechSynthesisUtterance(text); u.onend = done; setGeeSpeaking(true); speechSynthesis.speak(u); } catch { after?.(); }
+    }
+  }
+  const stopGeeVoice = () => { geeAudio.current?.pause(); try { speechSynthesis.cancel(); } catch {} setGeeSpeaking(false); };
+
+
+  // ---- Conversation with the Gee agent (Mastra) ----
+  type ChatMsg = { role: "user" | "assistant"; content: string };
+  type CheckInState = { fields: { symptoms: string[]; timing: string; severity: number | null; food: string; duration: string }; asking: string; done: boolean; irritants: { name: string; confidence: string; evidence: string }[]; source?: string };
+  const GREETING = "Hi, I’m Gee. I’m here with you. What are you feeling right now?";
+  const [geeChat, setGeeChat] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [geeThinking, setGeeThinking] = useState(false);
+  const [handsFree, setHandsFree] = useState(true);
+  const [checkIn, setCheckIn] = useState<CheckInState | null>(null);
+  const chatRef = useRef<ChatMsg[]>([]); chatRef.current = geeChat;
+  const handsFreeRef = useRef(handsFree); handsFreeRef.current = handsFree;
+  const chatEnd = useRef<HTMLDivElement>(null);
+  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [geeChat, geeThinking]);
+
+  const toDuration = (d: string) => {
+    const t = d.toLowerCase();
+    if (!t || t === "unknown") return "";
+    if (/still|ongoing|happening|right now/.test(t)) return "Still happening";
+    const n = Number(t.match(/\d+(\.\d+)?/)?.[0] ?? NaN);
+    if (/hour|hr/.test(t)) return !isNaN(n) && n > 3 ? "More than 3 hours" : !isNaN(n) && n < 1 ? "30–60 minutes" : "1–3 hours";
+    if (/min/.test(t) && !isNaN(n)) return n < 15 ? "Less than 15 minutes" : n <= 30 ? "15–30 minutes" : "30–60 minutes";
+    return "";
+  };
+
+  /** Apply what Gee has collected to the reaction form. */
+  function applyCheckIn(f: CheckInState["fields"], userText: string) {
+    setSymptoms(userText);
+    if (f.severity && f.severity >= 1 && f.severity <= 10) setSeverity(Math.round(f.severity));
+    const dur = toDuration(f.duration); if (dur) setDuration(dur);
+    if (f.food) {
+      const food = f.food.toLowerCase();
+      const match = mealsThatDay.find(m => { const n = m.name.toLowerCase(); return n.includes(food) || food.includes(n) || food.split(/\s+/).filter(w => w.length > 3).some(w => n.includes(w)); });
+      if (match) setMealName(match.name);
+    }
+    setReactionAI({ loading: false, symptoms: f.symptoms, timing: f.timing, intensity: f.severity ? `${f.severity}/10` : "", food: f.food, source: "gemini", forText: userText });
+    if (f.symptoms.length) setReactionTag(attackTag(detectSymptoms(f.symptoms.join(", ")).length ? detectSymptoms(f.symptoms.join(", ")) : f.symptoms.map(x => x.charAt(0).toUpperCase() + x.slice(1)), userText));
+  }
+
+  async function sendToGee(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    const history = [...chatRef.current, { role: "user" as const, content: t }];
+    setGeeChat(history);
+    setChatInput("");
+    const userText = history.filter(m => m.role === "user").map(m => m.content).join(". ");
+    voiceTextRef.current = userText;
+    setSymptoms(userText);
+    setGeeThinking(true);
+    try {
+      const out = await jsonFetch("/api/gee/chat", {
+        method: "POST",
+        body: JSON.stringify({ messages: history, reactionTime: occurredAt ? new Date(occurredAt).toISOString() : undefined }),
+      });
+      setGeeThinking(false);
+      setGeeChat(h => [...h, { role: "assistant", content: out.reply }]);
+      setCheckIn({ fields: out.fields, asking: out.asking, done: out.done, irritants: out.likelyIrritants ?? [], source: out.source });
+      applyCheckIn(out.fields, userText);
+      if (out.emergency) { geeSay(out.reply); setEmergencyOpen(true); return; }
+      // Hands-free: listen again as soon as Gee finishes asking
+      geeSay(out.reply, () => { if (!out.done && handsFreeRef.current && screenRef.current === "gee-voice") recorder.start(); });
+    } catch (e: any) {
+      setGeeThinking(false);
+      setVoiceMsg(e?.message ?? "Gee couldn’t answer. Try again.");
+    }
+  }
+
+  const recorder = useGeeRecorder({
+    onText: heard => sendToGee(heard),
+    onError: msg => {
+      if (msg === "unsupported") { startBrowserVoice("gee-voice"); return; }
+      setVoiceMsg(msg);
+    },
+  });
+
   function startVoice(target: Screen = "reaction-form") {
+    // Talk to Gee: a conversation with the Gee agent, voice via ElevenLabs (browser speech only as a fallback)
+    if (!recorder.supported) { startBrowserVoice(target); return; }
+    unlockGeeAudio(); stopGeeVoice(); setVoiceMsg("");
+    go("gee-voice");
+    if (chatRef.current.length === 0) {
+      setGeeChat([{ role: "assistant", content: GREETING }]);
+      geeSay(GREETING, () => { if (handsFreeRef.current && screenRef.current === "gee-voice") recorder.start(); });
+    } else {
+      recorder.start();
+    }
+  }
+
+  function startBrowserVoice(target: Screen = "reaction-form") {
     const w = window as any;
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
     if (!SR) { setVoiceMsg("Voice typing isn’t available in this browser. You can still type below."); go(target); return; }
@@ -424,8 +550,15 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     go(target);
     rec.start();
   }
-  const toggleVoice = () => { if (listening) { recognizer.current?.stop(); setListening(false); } else startVoice(screen === "gee-voice" ? "gee-voice" : "reaction-form"); };
-  const stopVoice = () => { recognizer.current?.stop(); setListening(false); };
+  const geeListening = listening || recorder.state === "listening";
+  const geeBusy = recorder.state === "transcribing";
+  const toggleVoice = () => {
+    if (recorder.state === "listening") { recorder.stop(); return; }
+    if (geeBusy) return;
+    if (listening) { recognizer.current?.stop(); setListening(false); return; }
+    startVoice(screen === "gee-voice" ? "gee-voice" : "reaction-form");
+  };
+  const stopVoice = () => { recognizer.current?.stop(); setListening(false); recorder.cancel(); stopGeeVoice(); };
 
   const voiceNotes = useMemo(() => {
     const t = symptoms.trim();
@@ -442,7 +575,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   // On the Talk to Gee screen, have AI read the transcript as it grows (after a short pause) and when talking stops
   useEffect(() => {
-    if (screen !== "gee-voice" || !symptoms.trim() || symptoms.trim() === reactionAI?.forText) return;
+    if (screen !== "gee-voice" || !symptoms.trim() || symptoms.trim() === reactionAI?.forText || symptoms === voiceTextRef.current) return;
     const t = setTimeout(() => analyzeSymptoms(symptoms), listening ? 1500 : 500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -510,12 +643,13 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const ingredientMeal = meals.find(m => m.id === ingredientMealId);
 
   // Allergens that appeared in meals logged right before a reaction.
-  const patterns = useMemo(() => {
-    const byName = new Map(meals.map(m => [m.name, m.flags]));
-    const counts = new Map<string, number>();
-    for (const r of reactions) for (const f of byName.get(r.food) ?? []) counts.set(f, (counts.get(f) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [meals, reactions]);
+  // Likely irritants across all your history (same algorithm the Gee agent uses)
+  const irritants = useMemo(() => findLikelyIrritants(meals, reactions, allergens, 6), [meals, reactions, allergens]);
+  // For the reaction being reviewed: include it as if saved, so today's meal counts
+  const reviewIrritants = useMemo(() => {
+    if (screen !== "reaction-review") return [];
+    return findLikelyIrritants(meals, [...reactions, { id: -1, food: mealName, severity, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : new Date().toISOString() }], allergens, 3);
+  }, [screen, meals, reactions, allergens, mealName, severity, occurredAt]);
 
   const linkedMealFlags = meals.find(m => m.name === mealName)?.flags ?? [];
   const lastTrigger = reactions[0]?.food && reactions[0].food !== "No related meal added" ? reactions[0].food : allergens[0];
@@ -923,17 +1057,30 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             )}
 
             <div className="allergen-list">
-              {patterns.length === 0 ? (
+              {irritants.length === 0 ? (
                 <article>
                   <span className="option-icon option-icon--rose"><Icon name="spark" size={24} /></span>
                   <div><strong>No strong patterns yet</strong><p>Keep logging meals and reactions so your clues can become more useful.</p></div>
                 </article>
-              ) : patterns.map(([a, n]) => (
-                <article key={a}>
-                  <span className="option-icon option-icon--rose"><Icon name={allergens.includes(a) ? "alert" : "spark"} size={24} /></span>
-                  <div><strong>Possible: {a}</strong><p>Showed up in meals before {n} reaction{n > 1 ? "s" : ""}.{allergens.includes(a) ? " Already on your list." : ""}</p></div>
-                </article>
-              ))}
+              ) : (
+                <>
+                  <p className="irritant-list__label"><Icon name="flask" size={14} /> Likely irritants, ranked</p>
+                  {irritants.map(x => (
+                    <article key={x.name} className="irritant-row">
+                      <span className={`irritant-badge irritant-badge--${x.confidence}`}>{x.confidence === "low" ? "early guess" : x.confidence}</span>
+                      <div>
+                        <strong>{x.name}{x.onYourList && <em className="ingredient-yours">on your list</em>}</strong>
+                        <p>{x.why}.</p>
+                        <span className="irritant-meter" aria-hidden="true"><i style={{ width: `${Math.round(x.score * 100)}%` }} /></span>
+                      </div>
+                      {!x.onYourList && (
+                        <button className="irritant-add" onClick={() => commitAllergens([x.name.toLowerCase()])} aria-label={`Add ${x.name} to my allergens`}><Icon name="plus" size={15} strokeWidth={2.3} /></button>
+                      )}
+                    </article>
+                  ))}
+                  <p className="irritant-how">Ranked by how often each ingredient or allergy group shows up in meals eaten up to 6 hours before your reactions, compared with how often you eat it without reacting. Severe and fast reactions and ingredients you flag count more.</p>
+                </>
+              )}
             </div>
             <div className="privacy-note allergen-note">
               <Icon name="shield" size={19} />
@@ -944,38 +1091,87 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
         )}
 
         {screen === "gee-voice" && (
-          <div className="screen gee-voice-screen">
+          <div className="screen gee-voice-screen gee-chat-screen">
             <AppHeader title="Talk to Gee" onBack={() => { stopVoice(); go("reaction-form"); }} onEmergency={openEmergency} />
-            <section className="gee-voice-hero">
-              <button className={`gee-voice-orb ${listening ? "is-listening" : ""}`} onClick={toggleVoice} aria-label={listening ? "Stop voice input" : "Start voice input"}>
+            <section className="gee-chat-hero">
+              <button className={`gee-voice-orb gee-voice-orb--small ${geeListening ? "is-listening" : ""} ${geeSpeaking ? "is-speaking" : ""}`} onClick={toggleVoice}
+                aria-label={geeListening ? "Stop and send what I said" : "Talk to Gee"} disabled={geeBusy || geeThinking}>
                 <Buddy />
-                <span className="gee-microphone"><Icon name="microphone" size={25} strokeWidth={2.1} /></span>
+                <span className="gee-microphone"><Icon name={geeSpeaking ? "speaker" : "microphone"} size={20} strokeWidth={2.1} /></span>
               </button>
-              <p className="eyebrow">{listening ? "Gee is listening" : "Gee is here"}</p>
-              <h2>{listening ? "Tell me what you’re feeling." : "Want to keep talking?"}</h2>
-              <p className="gee-voice-hero__hint">{listening ? "Speak naturally. You can pause whenever you need." : "Tap Gee to start, or edit your words below."}</p>
-              <span className={`voice-wave ${listening ? "is-active" : ""}`} aria-hidden="true"><i /><i /><i /><i /><i /></span>
+              <div>
+                <p className="eyebrow">{geeListening ? "Gee is listening" : geeBusy ? "Writing it down" : geeThinking ? "Gee is thinking" : geeSpeaking ? "Gee is talking" : "Gee is here"}</p>
+                <p className="gee-chat-hero__hint">{geeListening ? "Speak naturally. I’ll stop when you pause." : "Tap me to talk, or type below."}</p>
+                <span className={`voice-wave voice-wave--inline ${geeListening && !recorder.level ? "is-active" : ""}`} aria-hidden="true">
+                  {[0.55, 0.85, 1, 0.85, 0.55].map((k, i) => (
+                    <i key={i} style={recorder.state === "listening" ? { height: `${6 + Math.round(recorder.level * 24 * k)}px`, transition: "height .08s" } : undefined} />
+                  ))}
+                </span>
+              </div>
             </section>
-            <section className="voice-insights" aria-live="polite">
+
+            <div className="gee-chat" aria-live="polite">
+              {geeChat.map((m, i) => (
+                <div key={i} className={`gee-msg gee-msg--${m.role}`}>
+                  {m.role === "assistant" && <Buddy small />}
+                  <p>{m.content}</p>
+                </div>
+              ))}
+              {(geeThinking || geeBusy) && <div className="gee-msg gee-msg--assistant gee-msg--typing"><Buddy small /><p><i /><i /><i /></p></div>}
+              <div ref={chatEnd} />
+            </div>
+
+            <form className="gee-chat-input" onSubmit={e => { e.preventDefault(); stopGeeVoice(); recorder.cancel(); sendToGee(chatInput); }}>
+              <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Type your answer…" aria-label="Type your answer to Gee" disabled={geeThinking} />
+              <button type="submit" disabled={!chatInput.trim() || geeThinking} aria-label="Send"><Icon name="arrow" size={18} strokeWidth={2.2} /></button>
+            </form>
+
+            <section className="voice-insights checkin-progress">
               <div className="voice-insights__heading">
-                <span><Icon name="spark" size={17} /> AI notes from what you said</span>
-                <small>{reactionAI?.loading ? "Gee is reading…" : reactionAI?.source === "gemini" ? "AI read" : "Live preview"}</small>
+                <span><Icon name="spark" size={17} /> What Gee has so far</span>
+                <small>{checkIn?.source === "mastra" ? "Gee agent" : checkIn?.source === "fallback" ? "Basic mode" : "Live"}</small>
               </div>
               <ul>
-                {voiceNotes.map(n => (
-                  <li key={n.label}><i><Icon name="check" size={13} /></i><p><strong>{n.label}</strong><span>{n.value}</span></p></li>
-                ))}
+                {([["symptoms", "Symptoms"], ["timing", "When it started"], ["severity", "How bad"], ["food", "What you ate"], ["duration", "How long"]] as const).map(([key, label]) => {
+                  const f = checkIn?.fields;
+                  const v = !f ? "" : key === "symptoms" ? f.symptoms.join(", ") : key === "severity" ? (f.severity ? `${f.severity}/10` : "") : String(f[key] ?? "");
+                  const got = !!v && v !== "unknown";
+                  const asking = checkIn?.asking === key || (key === "symptoms" && checkIn?.asking === "detail");
+                  return (
+                    <li key={key} className={got ? "is-got" : asking ? "is-asking" : ""}>
+                      <i><Icon name={got ? "check" : asking ? "microphone" : "clock"} size={13} /></i>
+                      <p><strong>{label}</strong><span>{got ? v : asking ? "Gee is asking…" : v === "unknown" ? "Not sure" : "Not yet"}</span></p>
+                    </li>
+                  );
+                })}
               </ul>
             </section>
-            <label className="voice-transcript">
-              <span>What Gee heard</span>
-              <textarea value={symptoms} onChange={e => setSymptoms(e.target.value)} placeholder="Your words will appear here as you speak..." />
-            </label>
+
+            {checkIn?.done && (
+              <section className="irritant-card">
+                <div className="irritant-card__head"><Icon name="flask" size={18} /><strong>Likely irritants</strong><small>from your history</small></div>
+                {checkIn.irritants.length ? (
+                  <ul>
+                    {checkIn.irritants.map(x => (
+                      <li key={x.name}>
+                        <span className={`irritant-badge irritant-badge--${x.confidence}`}>{x.confidence === "low" ? "early guess" : x.confidence}</span>
+                        <div><strong>{x.name}</strong><small>{x.evidence}</small></div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p>Not enough history yet. Each check-in makes this smarter.</p>}
+              </section>
+            )}
+
             {voiceMsg && <p className="gee-voice-message">{voiceMsg}</p>}
-            <button className="primary-button" disabled={!symptoms.trim()} onClick={() => { stopVoice(); go("reaction-form"); }}>
-              Continue with these details <Icon name="arrow" size={20} />
+            <button className="primary-button" disabled={!symptoms.trim()} onClick={() => { stopVoice(); go("reaction-review"); analyzeSymptoms(symptoms); }}>
+              {checkIn?.done ? "Review my check-in" : "Skip to review"} <Icon name="arrow" size={20} />
             </button>
-            <button className="text-button" onClick={toggleVoice}>{listening ? "Stop listening" : "Try voice again"}</button>
+            <div className="gee-chat-options">
+              <label><input type="checkbox" checked={handsFree} onChange={e => setHandsFree(e.target.checked)} /> Hands-free</label>
+              <label><input type="checkbox" checked={geeMuted} onChange={e => { setGeeMuted(e.target.checked); if (e.target.checked) stopGeeVoice(); }} /> Mute Gee</label>
+            </div>
+            <p className="gee-credit">Voice by ElevenLabs · Gee agent by Mastra</p>
           </div>
         )}
 
@@ -1107,11 +1303,18 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                   </dl>
                 </div>
                 <div className="ai-clue-card">
-                  <div><Icon name="spark" size={18} /><strong>Pattern check</strong><small>AI preview</small></div>
-                  <p>{linkedMealFlags.length
-                    ? `${mealName} may have contained ${linkedMealFlags.join(", ")}. This will be compared with your other check-ins to look for patterns.`
-                    : "This reaction will be compared with your meal history. More check-ins are needed before meaningful ingredient patterns can appear."}</p>
-                  <span>{linkedMealFlags.length ? `Clue to review: ${linkedMealFlags[0]}` : "Clue to review: timing after food"}</span>
+                  <div><Icon name="spark" size={18} /><strong>Pattern check</strong><small>irritant detection</small></div>
+                  {(checkIn?.done && checkIn.irritants.length ? checkIn.irritants.map(x => ({ name: x.name, confidence: x.confidence, why: x.evidence })) : reviewIrritants).length > 0 ? (
+                    <ul className="clue-list">
+                      {(checkIn?.done && checkIn.irritants.length ? checkIn.irritants.map(x => ({ name: x.name, confidence: x.confidence, why: x.evidence })) : reviewIrritants).map(x => (
+                        <li key={x.name}><span className={`irritant-badge irritant-badge--${x.confidence}`}>{x.confidence === "low" ? "early guess" : x.confidence}</span> <strong>{x.name}</strong>: {x.why}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>{linkedMealFlags.length
+                      ? `${mealName} may have contained ${linkedMealFlags.join(", ")}. This will be compared with your other check-ins to look for patterns.`
+                      : "Pick what you ate beforehand so Gee can compare it with your other check-ins."}</p>
+                  )}
                 </div>
                 <p className="disclaimer">AI-generated clues can be incomplete or wrong and are not a diagnosis. Confirm allergy concerns with a qualified healthcare professional.</p>
                 {saveError && <p className="save-error">{saveError}</p>}

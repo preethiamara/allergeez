@@ -15,10 +15,11 @@ export function allergenMatches(profileItem: string, productAllergen: string) {
 
 // Common allergy groups, so "milk", "whey", "casein" all show as "Dairy", etc.
 const GROUPS: [string, RegExp][] = [
-  ["Dairy", /\b(dairy|milk|whey|casein|lactose|cheese|butter|cream|yogurt|ghee)\b/i],
   ["Eggs", /\b(eggs?|albumin|mayonnaise)\b/i],
   ["Peanuts", /\b(peanuts?|groundnuts?)\b/i],
   ["Tree nuts", /\b(tree ?nuts?|nuts|almonds?|hazelnuts?|cashews?|walnuts?|pecans?|pistachios?|macadamia|brazil nuts?)\b/i],
+  // Dairy after the nut groups, so "peanut butter" / "almond milk" count as nuts, not dairy
+  ["Dairy", /\b(dairy|milk|whey|casein|lactose|cheese|butter|cream|yogurt|ghee)\b/i],
   ["Wheat / gluten", /\b(wheat|gluten|barley|rye|spelt|semolina)\b/i],
   ["Soy", /\b(soy|soya|soybeans?|tofu|edamame)\b/i],
   ["Fish", /\b(fish|salmon|tuna|cod|anchov(y|ies))\b/i],
