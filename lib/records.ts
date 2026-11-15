@@ -5,6 +5,7 @@ export type Meal = { id: number; name: string; details: string; flags: string[];
 export type Reaction = {
   id: number; title: string; symptoms: string; symptomTags: string[]; severity: number; duration: string; food: string;
   occurredAt: string; createdAt: string;
+  geeThreadId?: string;   // the Talk to Gee conversation this reaction came from (Mastra memory thread in Neon)
 };
 export type Profile = { allergens: string[]; contact_name: string; contact_phone: string };
 
@@ -39,6 +40,7 @@ export const toReaction = (r: any): Reaction => ({
   duration: r.duration || "Not recorded",
   food: r.meal_name || "No related meal added",
   occurredAt: iso(r.occurred_at ?? r.created_at),
+  geeThreadId: r.gee_thread_id || undefined,
   createdAt: iso(r.created_at),
 });
 

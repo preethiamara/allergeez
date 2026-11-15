@@ -245,6 +245,17 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   // AI "attack tag" for the reaction being recorded
   const [reactionAI, setReactionAI] = useState<{ loading: boolean; tag?: string; symptoms?: string[]; timing?: string; intensity?: string; food?: string; source?: string; forText?: string } | null>(null);
   const [reactionTag, setReactionTag] = useState("");
+  const [geeThreadId, setGeeThreadId] = useState("");
+  // Saved Gee conversations shown in reaction history, by thread id
+  const [transcripts, setTranscripts] = useState<Record<string, { loading: boolean; messages?: { role: string; content: string }[]; error?: string }>>({});
+  async function loadTranscript(id: string) {
+    if (transcripts[id]?.messages || transcripts[id]?.loading) return;
+    setTranscripts(t => ({ ...t, [id]: { loading: true } }));
+    try {
+      const r = await jsonFetch(`/api/gee/chat?thread=${encodeURIComponent(id)}`);
+      setTranscripts(t => ({ ...t, [id]: { loading: false, messages: r.messages } }));
+    } catch (e: any) { setTranscripts(t => ({ ...t, [id]: { loading: false, error: e.message } })); }
+  }
   const analyzeSeq = useRef(0);
   const testInput = useRef<HTMLInputElement>(null);
 
@@ -457,6 +468,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const startReaction = () => {
     setSymptoms(""); setSeverity(4); setOccurredAt(localNow()); setDuration(""); setMealName(""); setReactionPhoto(undefined); setVoiceMsg("");
     setReactionAI(null); setReactionTag(""); setGeeChat([]); setCheckIn(null); setChatInput("");
+    setGeeThreadId(`gee-${crypto.randomUUID()}`); // this check-in's conversation, saved to Neon via Mastra memory
     go("reaction-form");
   };
 
@@ -499,6 +511,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
           symptoms, severity, duration, mealName: food, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : undefined,
           title: reactionTag.trim() || attackTag(detectSymptoms(symptoms), symptoms),
           symptomTags: reactionAI?.symptoms ?? detectSymptoms(symptoms),
+          geeThreadId: geeChat.some(m => m.role === "user") ? geeThreadId : undefined,
         }),
       });
       setReactions(r => [reaction, ...r]);
@@ -598,7 +611,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     try {
       const out = await jsonFetch("/api/gee/chat", {
         method: "POST",
-        body: JSON.stringify({ messages: history, reactionTime: occurredAt ? new Date(occurredAt).toISOString() : undefined }),
+        body: JSON.stringify({ messages: history, threadId: geeThreadId, reactionTime: occurredAt ? new Date(occurredAt).toISOString() : undefined }),
       });
       setGeeThinking(false);
       setGeeChat(h => [...h, { role: "assistant", content: out.reply }]);
@@ -1465,6 +1478,25 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                           <div><dt>Food beforehand</dt><dd>{r.food}</dd></div>
                           <div><dt>Potential allergens</dt><dd>{flags.length ? flags.join(", ") : "Not enough information yet"}</dd></div>
                         </dl>
+                        {r.geeThreadId && (() => {
+                          const t = transcripts[r.geeThreadId];
+                          return (
+                            <details className="gee-transcript" onToggle={e => { if ((e.target as HTMLDetailsElement).open) loadTranscript(r.geeThreadId!); }}>
+                              <summary><Buddy small /> Conversation with Gee</summary>
+                              {t?.loading && <p className="food-lookup__status">Loading…</p>}
+                              {t?.error && <p className="save-error">{t.error}</p>}
+                              {t?.messages && (
+                                <div className="gee-chat">
+                                  {t.messages.map((m, i) => (
+                                    <div key={i} className={`gee-msg gee-msg--${m.role === "user" ? "user" : "assistant"}`}>
+                                      {m.role !== "user" && <Buddy small />}<p>{m.content}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </details>
+                          );
+                        })()}
                       </details>
                       <button className="reaction-delete" onClick={() => deleteReaction(r.id)} aria-label="Delete reaction entry"><Icon name="trash" size={17} /></button>
                     </article>
