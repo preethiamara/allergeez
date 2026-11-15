@@ -7,7 +7,8 @@ import { Icon } from "./ui";
  * If the camera can't be opened (no permission, no camera, insecure origin), it explains why
  * and offers the system photo picker instead.
  */
-export default function CameraCapture({ onCapture, onClose, onFallback }: {
+export default function CameraCapture({ onCapture, onClose, onFallback, hint = "Snap your meal, a label, or a menu" }: {
+  hint?: string;
   onCapture: (file: File) => void;
   onClose: () => void;
   onFallback: () => void;
@@ -62,7 +63,7 @@ export default function CameraCapture({ onCapture, onClose, onFallback }: {
     const blob: Blob | null = await new Promise(res => c.toBlob(res, "image/jpeg", 0.9));
     if (!blob) return;
     stopStream();
-    onCapture(new File([blob], `meal-${Date.now()}.jpg`, { type: "image/jpeg" }));
+    onCapture(new File([blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" }));
   }
 
   return (
@@ -72,7 +73,7 @@ export default function CameraCapture({ onCapture, onClose, onFallback }: {
 
       <div className="camera__top">
         <button className="camera__round" onClick={() => { stopStream(); onClose(); }} aria-label="Close camera"><Icon name="close" /></button>
-        <span>Snap your meal, a label, or a menu</span>
+        <span>{hint}</span>
       </div>
 
       {state === "starting" && <p className="camera__status">Opening camera…</p>}

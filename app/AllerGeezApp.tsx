@@ -139,7 +139,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
   // meal flow
   const [desc, setDesc] = useState("");
   const [photo, setPhoto] = useState<string>();
-  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraFor, setCameraFor] = useState<"meal" | "reaction" | null>(null);
   const [foodQuery, setFoodQuery] = useState("");
   const [foodSearch, setFoodSearch] = useState<{ loading: boolean; products?: FoodProduct[]; error?: string; query?: string }>({ loading: false });
   const [openFood, setOpenFood] = useState<string>();
@@ -213,7 +213,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
   }
 
   async function handleMealFile(file: File) {
-    setCameraOpen(false);
+    setCameraFor(null);
     setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setScan({ loading: true }); go("review");
     const image = await prepareImage(file);
     setPhoto(`data:${image.mimeType};base64,${image.data}`);
@@ -302,7 +302,10 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
 
   function onReactionPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; e.target.value = "";
-    if (!file) return;
+    if (file) loadReactionPhoto(file);
+  }
+  function loadReactionPhoto(file: File) {
+    setCameraFor(null);
     const r = new FileReader(); r.onload = () => setReactionPhoto(String(r.result)); r.readAsDataURL(file);
   }
 
@@ -452,7 +455,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                 <span><strong>Choose a photo</strong><small>Pick one from your library</small></span>
                 <Icon name="chevron" size={20} />
               </button>
-              <button onClick={() => setCameraOpen(true)}>
+              <button onClick={() => setCameraFor("meal")}>
                 <span className="option-icon option-icon--peach"><Icon name="camera" size={27} /></span>
                 <span><strong>Take a photo</strong><small>Snap your meal or a label now</small></span>
                 <Icon name="chevron" size={20} />
@@ -843,7 +846,13 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                     <button onClick={() => setReactionPhoto(undefined)} aria-label="Remove photo"><Icon name="close" size={18} /></button>
                   </div>
                 ) : (
-                  <button onClick={() => reactionInput.current?.click()}><Icon name="image" size={21} /> Add a symptom photo</button>
+                  <>
+                    <span className="reaction-photo-field__label">Symptom photo <small>Optional</small></span>
+                    <div className="photo-choice">
+                      <button onClick={() => setCameraFor("reaction")}><Icon name="camera" size={21} /> Take a photo</button>
+                      <button onClick={() => reactionInput.current?.click()}><Icon name="image" size={21} /> Add a photo</button>
+                    </div>
+                  </>
                 )}
                 <input ref={reactionInput} hidden type="file" accept="image/*" onChange={onReactionPhoto} />
               </div>
@@ -955,9 +964,13 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
           <Emergency contact={contact} trigger={lastTrigger} onExit={() => go("home")} />
         )}
 
-        {cameraOpen && (
-          <CameraCapture onCapture={handleMealFile} onClose={() => setCameraOpen(false)}
-            onFallback={() => { setCameraOpen(false); cameraInput.current?.click(); }} />
+        {cameraFor === "meal" && (
+          <CameraCapture onCapture={handleMealFile} onClose={() => setCameraFor(null)}
+            onFallback={() => { setCameraFor(null); cameraInput.current?.click(); }} />
+        )}
+        {cameraFor === "reaction" && (
+          <CameraCapture hint="Photograph the hives, rash, or swelling" onCapture={loadReactionPhoto} onClose={() => setCameraFor(null)}
+            onFallback={() => { setCameraFor(null); reactionInput.current?.click(); }} />
         )}
 
         {emergencyOpen && (

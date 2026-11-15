@@ -441,3 +441,10 @@ h1{font-size:27px}
 .match-chips button{display:block;width:100%;text-align:left;border:1px solid #efd9df;border-radius:13px;background:#fff;color:#7a5560;padding:9px 12px;font-size:12px;font-weight:700;line-height:1.35;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .match-chips button.is-on{background:var(--pink-soft);border-color:#f0c6d2;color:#9c5c70}
 .photo-match.is-miss{background:#fbf0e6;color:#8a5a2b}
+
+/* Reaction symptom photo: take or add */
+.reaction-photo-field__label{display:block;margin-bottom:7px;font-size:12px;font-weight:800;color:var(--ink)}
+.reaction-photo-field__label small{color:#a99599;font-weight:600;margin-left:4px}
+.photo-choice{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.photo-choice button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:48px;border:1px dashed #dbaaba;border-radius:14px;color:#a54e69;background:#fff8fa;font-size:12px;font-weight:800;cursor:pointer}
+.photo-choice button:hover{background:#fdeef3}
