@@ -75,3 +75,17 @@ export function parseFood(text: string): string {
   const food = m[1].trim();
   return /^(a few|some|minutes?|hours?|lunch|dinner|breakfast)$/i.test(food) ? "" : food;
 }
+
+// ---- Serious-symptom check (anaphylaxis warning signs), aware of negations like "no trouble breathing" ----
+const NEGATED = new RegExp([
+  String.raw`\b(?:no|not|without|never|don'?t have|do not have|isn'?t|aren'?t|haven'?t|no sign of)\s+(?:any\s+|really\s+)?(?:\w+\s+){0,3}?(?:trouble|difficulty|problems?|issues?|pain|tightness|swelling)\s+(?:with\s+)?(?:my\s+)?(?:breathing|swallowing|throat|tongue|chest)\b`,
+  String.raw`\b(?:my\s+)?(?:breathing|throat|chest|tongue)\s+(?:is|feels|seems)\s+(?:totally\s+|completely\s+)?(?:fine|ok|okay|normal|good|clear)\b`,
+  String.raw`\bcan\s+breathe(?:\s+(?:fine|okay|ok|normally|just fine))?\b`,
+  String.raw`\bnot\s+(?:dizzy|faint|lightheaded|wheezing)\b`,
+].join("|"), "gi");
+const SERIOUS_SIGNS = /\b(trouble|difficulty|hard|can'?t|cannot)\s+(?:to\s+)?breath(e|ing)\b|short(ness)? of breath|wheez\w*|throat\b.*\b(tight|clos|swell|swoll)|\b(tight|clos|swell|swoll)\w*\s+throat|tongue\b.*\b(swell|swoll|thick)|\b(swell|swoll)\w*\s+tongue|can'?t swallow|trouble swallowing|faint\w*|passed out|pass(ing)? out|dizz\w*|lightheaded|chest (is )?tight\w*/i;
+
+/** True when the text describes warning signs of a severe reaction (and isn't saying the opposite). */
+export function isSerious(text: string): boolean {
+  return SERIOUS_SIGNS.test((text || "").replace(NEGATED, " "));
+}
