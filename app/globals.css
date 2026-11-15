@@ -678,3 +678,7 @@ h1{font-size:27px}
 .extras__body span{background:#f6f0ee;color:#6d5a60;border-radius:7px;padding:2px 7px;font-size:10.5px}
 .extras__body span.is-yours{background:var(--red);color:#fff;font-weight:700}
 .extras__body small{color:#a99599;font-size:10px}
+
+.eaten-at{margin:14px 0 4px}
+.eaten-at__row{display:flex;align-items:center;gap:10px}
+.eaten-at__row input{flex:1;min-width:0}

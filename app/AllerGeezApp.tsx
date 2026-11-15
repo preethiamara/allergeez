@@ -32,6 +32,21 @@ type ScanResult = {
 const TRIGGER_LABEL: Record<string, string> = { histamine: "Histamine", nickel: "Nickel", salicylates: "Salicylates", tyramine: "Tyramine" };
 
 /** Additives and naturally occurring triggers, folded into one small line so the ingredient notes stay clean. */
+/** When the meal was eaten: defaults to now, can be set to any earlier time. */
+function EatenAtField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const local = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+  return (
+    <label className="reaction-field eaten-at">
+      <span>When did you eat it? {!value && <small>Now</small>}</span>
+      <div className="eaten-at__row">
+        <input type="datetime-local" value={value || local(new Date())} max={local(new Date())}
+          onChange={e => onChange(e.target.value)} aria-label="When you ate it" />
+        {value && <button type="button" className="inline-link" onClick={() => onChange("")}>Now</button>}
+      </div>
+    </label>
+  );
+}
+
 function ExtrasLine({ additives = [], triggers = [], allergens }: { additives?: Additive[]; triggers?: NaturalTrigger[]; allergens: string[] }) {
   if (!additives.length && !triggers.length) return null;
   const groups = [...new Set(additives.map(a => a.group))];
@@ -194,6 +209,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string } | null>(null);
   const [scan, setScan] = useState<{ loading: boolean; result?: ScanResult; error?: string }>({ loading: false });
   const scanSeq = useRef(0);
+  const [eatenAt, setEatenAt] = useState(""); // "" = now; otherwise a datetime-local value
   const libraryInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
 
@@ -265,7 +281,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   async function handleMealFile(file: File, target: Screen = "review") {
     setCameraFor(null);
-    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null); setScan({ loading: true }); go(target);
+    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null); setEatenAt(""); setScan({ loading: true }); go(target);
     const image = await prepareImage(file);
     setPhoto(`data:${image.mimeType};base64,${image.data}`);
     lastScanInput.current = { image };
@@ -345,16 +361,17 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
           flags: [...new Set([...mealFlags.mine, ...mealFlags.common,
             ...(scan.result?.additives ?? []).map(a => a.group), ...(scan.result?.natural_triggers ?? []).map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger)])],
           ingredients: [...foodNames, ...(scan.result?.ingredients ?? [])].slice(0, 40).map(name => ({ name, flagged: false })),
+          eatenAt: eatenAt ? new Date(eatenAt).toISOString() : undefined,
         }),
       });
-      setMeals(m => [meal, ...m]);
+      setMeals(m => [meal, ...m].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       if (photo) setMealImages(m => ({ ...m, [meal.id]: photo }));
       setSaved(true);
     } catch (e: any) { setSaveError(e.message); }
   }
 
   const resetMeal = () => {
-    setDesc(""); setPhoto(undefined); setScan({ loading: false });
+    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setEatenAt("");
     setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null);
     go("home");
   };
@@ -376,7 +393,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   // ---------- test a food (check without logging) ----------
   const resetTest = () => {
     scanSeq.current++;
-    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setSaved(false); setSaveError("");
+    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setSaved(false); setSaveError(""); setEatenAt("");
     setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null); setOpenFood(undefined);
   };
   const productText = (f: FoodProduct) => `Packaged food: ${f.name}${f.brand ? ` (${f.brand})` : ""}.` +
@@ -966,6 +983,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                     <p className="save-error">{scan.error} <button className="inline-link" onClick={() => runScan(lastScanInput.current)}>Try again</button></p>
                   )}
                 </div>
+                <EatenAtField value={eatenAt} onChange={setEatenAt} />
                 <p className="disclaimer">These are clues, not a diagnosis. A healthcare professional can help confirm allergies.</p>
                 {saveError && <p className="save-error">{saveError}</p>}
                 <button className="primary-button" onClick={saveMeal} disabled={scan.loading && !desc.trim()}>
@@ -1534,11 +1552,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 {saveError && <p className="save-error">{saveError}</p>}
                 {saved ? (
                   <p className="profile-success-hint"><Icon name="check" size={16} /> Saved to your food history</p>
-                ) : (
+                ) : (<>
+                  {(scan.result || selectedFoods.length > 0) && <EatenAtField value={eatenAt} onChange={setEatenAt} />}
                   <button className="secondary-button" onClick={saveMeal} disabled={scan.loading || !(scan.result || selectedFoods.length)}>
                     <Icon name="plus" size={18} /> I ate this, save to food history
                   </button>
-                )}
+                </>)}
                 <button className="primary-button" style={{ marginTop: 10 }} onClick={resetTest}>Test another food</button>
               </>
             )}
