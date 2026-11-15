@@ -20,8 +20,11 @@ export async function POST(req: Request) {
     const details = String(body?.details ?? "").trim().slice(0, 4000);
     const name = String(body?.name ?? "").trim().slice(0, 80) || "New meal";
     const ingredients = cleanIngredients(body?.ingredients);
-    const [row] = await sql`insert into meals (user_id, name, details, flags, ingredients)
-      values (${userId}, ${name}, ${details}, ${cleanFlags(body?.flags)}, ${JSON.stringify(ingredients)}::jsonb) returning *`;
+    // When it was eaten: any past time is fine; missing, invalid or future times mean "now"
+    const t = body?.eatenAt ? new Date(String(body.eatenAt)) : null;
+    const eatenAt = t && !isNaN(t.getTime()) && t.getTime() <= Date.now() + 5 * 60e3 ? t.toISOString() : new Date().toISOString();
+    const [row] = await sql`insert into meals (user_id, name, details, flags, ingredients, created_at)
+      values (${userId}, ${name}, ${details}, ${cleanFlags(body?.flags)}, ${JSON.stringify(ingredients)}::jsonb, ${eatenAt}) returning *`;
     return Response.json(toMeal(row));
   } catch (e) { return fail(e, "Saving meal"); }
 }

@@ -12,7 +12,7 @@ import type { FoodProduct, Nutrients } from "@/lib/nutrition";
 import { allergenMatches, allergyGroup } from "@/lib/allergens";
 import { attackTag, detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 import { findLikelyIrritants } from "@/lib/irritants";
-import { matchesUserList, type Additive, type NaturalTrigger } from "@/lib/additives";
+import { matchesUserList, type Additive, type NaturalTrigger, detectAdditives, detectNaturalTriggers } from "@/lib/additives";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
@@ -20,6 +20,18 @@ type Screen =
   | "profile" | "test-food";
 
 type NutritionEstimate = { portion?: string; kcal?: number; protein?: number; carbs?: number; fat?: number; sugars?: number; fiber?: number; sodiumMg?: number };
+/** "Oats, chia seeds, sugars (cane sugar, tapioca syrup), natural flavors." → top-level ingredients */
+function splitIngredients(text: string) {
+  const out: string[] = []; let depth = 0, cur = "";
+  for (const ch of text.replace(/^\s*ingredients?\s*:\s*/i, "")) {
+    if (ch === "(" || ch === "[") depth++;
+    if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    if ((ch === "," || ch === ";") && depth === 0) { out.push(cur); cur = ""; } else cur += ch;
+  }
+  out.push(cur);
+  return out.map(x => x.replace(/[.*]+$/g, "").replace(/\*/g, "").trim()).filter(x => x && x.length < 120).slice(0, 40);
+}
+
 type ScanResult = {
   kind?: "packaged" | "label" | "menu" | "homemade" | "restaurant" | "not_food";
   name?: string; ingredients?: string[]; flags?: { ingredient: string; allergen: string; reason: string }[];
@@ -32,6 +44,21 @@ type ScanResult = {
 const TRIGGER_LABEL: Record<string, string> = { histamine: "Histamine", nickel: "Nickel", salicylates: "Salicylates", tyramine: "Tyramine" };
 
 /** Additives and naturally occurring triggers, folded into one small line so the ingredient notes stay clean. */
+/** When the meal was eaten: defaults to now, can be set to any earlier time. */
+function EatenAtField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const local = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+  return (
+    <label className="reaction-field eaten-at">
+      <span>When did you eat it? {!value && <small>Now</small>}</span>
+      <div className="eaten-at__row">
+        <input type="datetime-local" value={value || local(new Date())} max={local(new Date())}
+          onChange={e => onChange(e.target.value)} aria-label="When you ate it" />
+        {value && <button type="button" className="inline-link" onClick={() => onChange("")}>Now</button>}
+      </div>
+    </label>
+  );
+}
+
 function ExtrasLine({ additives = [], triggers = [], allergens }: { additives?: Additive[]; triggers?: NaturalTrigger[]; allergens: string[] }) {
   if (!additives.length && !triggers.length) return null;
   const groups = [...new Set(additives.map(a => a.group))];
@@ -143,6 +170,8 @@ function NutritionFacts({ food, allergens }: { food: FoodProduct; allergens: str
           <div className="nutrition__head"><strong>Nutrition facts</strong><small>{useServing ? `per serving${food.servingSize ? ` (${food.servingSize})` : ""}` : "per 100 g"}</small></div>
           <dl>{rows.map(([k, label, unit]) => <div key={k}><dt>{label}</dt><dd>{n[k]}{unit && ` ${unit}`}</dd></div>)}</dl>
         </>
+      ) : food.sourceUrl && food.ingredients ? (
+        <p className="test-ingredients"><strong>Ingredients</strong> (from {food.sourceSite}): {food.ingredients}</p>
       ) : <p className="nutrition__none">No nutrition facts listed for this product.</p>}
       {(food.allergens.length > 0 || food.traces.length > 0) && (
         <div className="possible-tags">
@@ -191,9 +220,10 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const [extraGroups, setExtraGroups] = useState<string[]>([]);
   const [groupDraft, setGroupDraft] = useState<string | null>(null);
   // Product matched from a photo (Gemini reads brand/barcode → Bright Data looks it up)
-  const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string } | null>(null);
+  const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string; web?: { url: string; site: string } } | null>(null);
   const [scan, setScan] = useState<{ loading: boolean; result?: ScanResult; error?: string }>({ loading: false });
   const scanSeq = useRef(0);
+  const [eatenAt, setEatenAt] = useState(""); // "" = now; otherwise a datetime-local value
   const libraryInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
 
@@ -250,7 +280,15 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
       if (scanId !== scanSeq.current) return;
       const products: FoodProduct[] = r.products ?? [];
       const exact = r.exact !== false && products.length > 0;
-      setPhotoMatch({ loading: false, products, exact, label });
+      setPhotoMatch({ loading: false, products, exact, label, web: r.web });
+      // The real label beats the photo's guesses: swap in its ingredients and re-check additives / triggers
+      const real = r.web && products[0]?.ingredients;
+      if (real) setScan(s => {
+        if (!s.result) return s;
+        const ingredients = splitIngredients(real);
+        const additives = [...(s.result.additives ?? []).filter(a => !detectAdditives(ingredients).some(b => b.name === a.name)), ...detectAdditives(ingredients)];
+        return { ...s, result: { ...s.result, ingredients, additives, natural_triggers: detectNaturalTriggers(ingredients) } };
+      });
       // Only auto-pick when it's the same brand; otherwise the user chooses from suggestions
       if (exact) setSelectedFoods([products[0]]);
     } catch (e: any) {
@@ -265,7 +303,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   async function handleMealFile(file: File, target: Screen = "review") {
     setCameraFor(null);
-    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null); setScan({ loading: true }); go(target);
+    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null); setEatenAt(""); setScan({ loading: true }); go(target);
     const image = await prepareImage(file);
     setPhoto(`data:${image.mimeType};base64,${image.data}`);
     lastScanInput.current = { image };
@@ -345,16 +383,17 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
           flags: [...new Set([...mealFlags.mine, ...mealFlags.common,
             ...(scan.result?.additives ?? []).map(a => a.group), ...(scan.result?.natural_triggers ?? []).map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger)])],
           ingredients: [...foodNames, ...(scan.result?.ingredients ?? [])].slice(0, 40).map(name => ({ name, flagged: false })),
+          eatenAt: eatenAt ? new Date(eatenAt).toISOString() : undefined,
         }),
       });
-      setMeals(m => [meal, ...m]);
+      setMeals(m => [meal, ...m].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
       if (photo) setMealImages(m => ({ ...m, [meal.id]: photo }));
       setSaved(true);
     } catch (e: any) { setSaveError(e.message); }
   }
 
   const resetMeal = () => {
-    setDesc(""); setPhoto(undefined); setScan({ loading: false });
+    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setEatenAt("");
     setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null); setExtraGroups([]); setGroupDraft(null);
     go("home");
   };
@@ -376,7 +415,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   // ---------- test a food (check without logging) ----------
   const resetTest = () => {
     scanSeq.current++;
-    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setSaved(false); setSaveError("");
+    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setSaved(false); setSaveError(""); setEatenAt("");
     setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null); setOpenFood(undefined);
   };
   const productText = (f: FoodProduct) => `Packaged food: ${f.name}${f.brand ? ` (${f.brand})` : ""}.` +
@@ -895,7 +934,8 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                   <div className={`photo-match ${!photoMatch.loading && !photoMatch.exact ? "is-miss" : ""}`} aria-live="polite">
                     <Icon name={photoMatch.loading ? "search" : photoMatch.exact ? "check" : "alert"} size={18} />
                     <p>
-                      {photoMatch.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database…</>
+                      {photoMatch.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database and on the web…</>
+                        : photoMatch.web ? <>Not in the food database, so Gee searched the web and found the label on <a href={photoMatch.web.url} target="_blank" rel="noreferrer">{photoMatch.web.site}</a>. Double-check the package.</>
                         : photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</>
                         : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database, so these notes come from the photo only.{photoMatch.products?.length ? " Tap a similar product below if it’s the same thing." : ""}</>}
                     </p>
@@ -966,6 +1006,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                     <p className="save-error">{scan.error} <button className="inline-link" onClick={() => runScan(lastScanInput.current)}>Try again</button></p>
                   )}
                 </div>
+                <EatenAtField value={eatenAt} onChange={setEatenAt} />
                 <p className="disclaimer">These are clues, not a diagnosis. A healthcare professional can help confirm allergies.</p>
                 {saveError && <p className="save-error">{saveError}</p>}
                 <button className="primary-button" onClick={saveMeal} disabled={scan.loading && !desc.trim()}>
@@ -1501,7 +1542,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 {photoMatch && !photoMatch.loading && (
                   <div className={`photo-match ${!photoMatch.exact ? "is-miss" : ""}`}>
                     <Icon name={photoMatch.exact ? "check" : "alert"} size={18} />
-                    <p>{photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</> : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database.</>}</p>
+                    <p>{photoMatch.web ? <>Label found on the web: <a href={photoMatch.web.url} target="_blank" rel="noreferrer">{photoMatch.web.site}</a></> : photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</> : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database.</>}</p>
                   </div>
                 )}
                 {selectedFoods.map(f => (
@@ -1534,11 +1575,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 {saveError && <p className="save-error">{saveError}</p>}
                 {saved ? (
                   <p className="profile-success-hint"><Icon name="check" size={16} /> Saved to your food history</p>
-                ) : (
+                ) : (<>
+                  {(scan.result || selectedFoods.length > 0) && <EatenAtField value={eatenAt} onChange={setEatenAt} />}
                   <button className="secondary-button" onClick={saveMeal} disabled={scan.loading || !(scan.result || selectedFoods.length)}>
                     <Icon name="plus" size={18} /> I ate this, save to food history
                   </button>
-                )}
+                </>)}
                 <button className="primary-button" style={{ marginTop: 10 }} onClick={resetTest}>Test another food</button>
               </>
             )}
