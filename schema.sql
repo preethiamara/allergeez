@@ -39,3 +39,7 @@ create table if not exists food_lookups (
 
 -- Meal ingredients with user flags: [{"name": "peanuts", "flagged": true}, ...]
 alter table meals add column if not exists ingredients jsonb not null default '[]'::jsonb;
+
+-- Short AI "attack tag" title and detected symptoms for each reaction
+alter table reactions add column if not exists title text;
+alter table reactions add column if not exists symptom_tags text[] not null default '{}';

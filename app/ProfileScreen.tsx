@@ -31,8 +31,16 @@ export default function ProfileScreen({ user, contact, onSaveContact, onBack }: 
   const [contactState, setContactState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [contactError, setContactError] = useState("");
 
-  // After signing in, reload so the server loads this account's data.
-  const finish = () => { window.location.href = "/"; };
+  // After signing in, make sure the browser actually kept the login cookie, then reload so the
+  // server loads this account's data. Safari (and any plain-http address other than localhost)
+  // rejects Neon Auth's secure-only cookies, which looks like "sign up did nothing".
+  const COOKIE_BLOCKED = "Your account is ready, but this browser blocked the login cookie. Open the app over https (for example https://localhost:3000) or use Chrome, then log in.";
+  async function finish() {
+    const { data } = await authClient.getSession().catch(() => ({ data: null }));
+    if (!data?.user) throw new Error(COOKIE_BLOCKED);
+    window.location.href = "/";
+  }
+  const insecure = typeof window !== "undefined" && window.location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(window.location.hostname);
 
   async function submitEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +51,7 @@ export default function ProfileScreen({ user, contact, onSaveContact, onBack }: 
         ? await authClient.signUp.email({ email: email.trim(), password, name: email.trim().split("@")[0] })
         : await authClient.signIn.email({ email: email.trim(), password });
       if (res.error) throw new Error(res.error.message);
-      finish();
+      await finish();
     } catch (err: any) { setError(friendly(err?.message)); setBusy(""); }
   }
 
@@ -61,7 +69,7 @@ export default function ProfileScreen({ user, contact, onSaveContact, onBack }: 
 
   async function logOut() {
     setBusy("logout");
-    try { await authClient.signOut(); } finally { finish(); }
+    try { await authClient.signOut(); } finally { window.location.href = "/"; }
   }
 
   async function saveContact() {
@@ -118,6 +126,12 @@ export default function ProfileScreen({ user, contact, onSaveContact, onBack }: 
             <h2>{mode === "signup" ? "Sign up" : "Log in"}</h2>
             <p>{mode === "signup" ? "Keep your allergy clues, emergency contacts, and logs synced." : "Access your allergy records and emergency profile."}</p>
           </section>
+          {insecure && (
+            <p className="save-error" role="alert">
+              Sign-in needs a secure (https) address. You opened the app at {window.location.host} over http, so your browser will refuse the login.
+              Use the https link instead.
+            </p>
+          )}
           <form className="profile-form-card" onSubmit={submitEmail}>
             <strong className="profile-form-title">{mode === "signup" ? "sign up:" : "log in:"}</strong>
             <div className="profile-field">

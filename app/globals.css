@@ -520,7 +520,7 @@ h1{font-size:27px}
 .photo-choice button:hover{background:#fdeef3}
 
 /* ---------- Profile, flags, Test a food (new design additions) ---------- */
-.avatar{overflow:hidden;padding:0}
+.avatar{overflow:hidden;padding:0;display:grid;place-items:center;line-height:1}
 .avatar img,.profile-avatar-large img{width:100%;height:100%;border-radius:50%;object-fit:cover}
 .profile-guest-note{color:var(--muted);font-size:11px;line-height:1.5;text-align:center;margin:12px 8px 16px}
 .call-button--contact{margin-top:10px;background:#4a6b52;box-shadow:0 8px 17px #4a6b5233}
@@ -565,3 +565,34 @@ h1{font-size:27px}
 .verdict--checking{background:#fff;border-color:var(--border);color:var(--ink)}
 .verdict--checking .verdict__icon{background:var(--pink-soft);color:#b65070;animation:1.2s ease-in-out infinite alternate tag-pulse}
 .test-ingredients{color:#6d5a60;font-size:12px;line-height:1.5;margin-top:8px}
+
+/* Review: allergy groups + manual add */
+.ai-card__groups-label{margin-top:12px;color:#9c5c70;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase}
+.ai-card__groups-label+.possible-tags{padding-top:7px}
+.possible-tags span.tag-manual{display:inline-flex;align-items:center;gap:4px;background:#f3e6fb;color:#7a4f96}
+.possible-tags span.tag-manual button{display:grid;place-items:center;width:15px;height:15px;border:0;border-radius:50%;background:#fff;color:#7a4f96;cursor:pointer;padding:0}
+.tag-add{display:grid;place-items:center;width:27px;height:27px;border:1.5px dashed #dbaaba;border-radius:9px;background:#fff;color:#b65070;cursor:pointer}
+.tag-add:hover{background:#fdeef3}
+.tag-add-form input{height:27px;width:120px;border:1.5px solid #dbaaba;border-radius:9px;padding:0 8px;font-size:11px;color:var(--ink);background:#fff}
+.tag-add-form input:focus{outline:0;border-color:var(--pink)}
+
+/* Reaction attack tag + symptom chips */
+.reaction-tag{flex:1;min-width:0;display:grid;gap:2px}
+.reaction-tag input{width:100%;border:0;border-bottom:1.5px dashed transparent;background:0 0;color:var(--ink);font:800 17px Nunito,sans-serif;padding:2px 0}
+.reaction-tag input:hover,.reaction-tag input:focus{border-bottom-color:#e5c3cd;outline:0}
+.symptom-chips{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 2px}
+.symptom-chips span{background:#fbe9ee;color:#9c5c70;border-radius:8px;padding:4px 8px;font-size:11px;font-weight:700}
+.symptom-chips--small{margin:4px 0 0}
+.symptom-chips--small span{font-size:9.5px;padding:2px 6px}
+.reaction-said{color:var(--muted);font-size:11px;font-style:italic;line-height:1.45;margin:8px 0 2px}
+
+/* Allergen validation */
+.allergen-check__status{color:var(--muted);font-size:11px}
+.allergen-check{display:grid;grid-template-columns:auto 1fr;gap:6px 9px;align-items:start;padding:10px 12px;border-radius:14px;background:#fbe3e1;color:#9c3434}
+.allergen-check p{font-size:12px;line-height:1.4;color:#7a3a3a}
+.allergen-check>div{grid-column:2;display:flex;flex-wrap:wrap;gap:6px}
+.allergen-check button{border:0;border-radius:9px;background:var(--red);color:#fff;padding:5px 9px;font-size:11px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center}
+.allergen-check button.is-quiet{background:#fff;color:#9c3434}
+.mini-spinner{width:16px;height:16px;border:2.5px solid #ffffff80;border-top-color:#fff;border-radius:50%;animation:.8s linear infinite spin}
+@keyframes spin{to{transform:rotate(360deg)}}
+.allergen-check button.allergen-override{border:1px solid #e9b9b6}

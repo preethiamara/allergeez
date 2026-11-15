@@ -22,8 +22,10 @@ export async function POST(req: Request) {
     const mealName = String(b?.mealName ?? "").trim() || null;
     const occurred = b?.occurredAt ? new Date(b.occurredAt) : new Date();
     const occurredAt = isNaN(occurred.getTime()) ? new Date() : occurred;
-    const [row] = await sql`insert into reactions (user_id, suspected_trigger, symptoms, severity, duration, meal_name, occurred_at)
-      values (${userId}, ${b?.suspectedTrigger ?? mealName}, ${symptoms}, ${severity}, ${duration}, ${mealName}, ${occurredAt.toISOString()})
+    const title = String(b?.title ?? "").trim().slice(0, 60) || null;
+    const symptomTags = Array.isArray(b?.symptomTags) ? b.symptomTags.map((x: unknown) => String(x).trim()).filter(Boolean).slice(0, 8) : [];
+    const [row] = await sql`insert into reactions (user_id, suspected_trigger, symptoms, severity, duration, meal_name, occurred_at, title, symptom_tags)
+      values (${userId}, ${b?.suspectedTrigger ?? mealName}, ${symptoms}, ${severity}, ${duration}, ${mealName}, ${occurredAt.toISOString()}, ${title}, ${symptomTags})
       returning *`;
     return Response.json(toReaction(row));
   } catch (e) { return fail(e, "Saving reaction"); }
