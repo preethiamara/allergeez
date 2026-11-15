@@ -91,7 +91,8 @@ Do not call any tool more than once per turn. Never call a tool before you know 
 6. If they say they don't know or don't want to answer, accept it, mark that field "unknown", and move on.
 7. Consider more than the big allergens: food additives (sulfites, colorings like Red 40, MSG, preservatives, sweeteners) and compounds foods are naturally high in (histamine, nickel, salicylates, tyramine). The briefing lists these for each recent meal. If one of the user's known allergens is among them, mention it briefly.
 8. INGREDIENTS, NOT PRODUCTS: a likely irritant is always an ingredient (e.g. walnuts, pea protein), an additive (e.g. sulfites) or an allergy group (e.g. Tree nuts), never a whole product, brand or dish name (not "Pure Organic Fruit Bars" or "pad thai"). If the user names a product or dish, record it as the food, and talk about the ingredients in it that could be the cause. When you summarize likely irritants, name ingredients or groups only.
-9. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
+9. MEMORY: the briefing may list this person's earlier check-ins (your memory, saved between conversations). If today's food, ingredient or symptoms match an earlier check-in, say so ONCE, in a few words, the first time you notice it (e.g. "You had hives after shrimp tacos last time too."), then carry on with your question. That pattern is useful for them and their doctor. Never read the whole history back, and never treat a past answer as today's answer.
+10. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
   // Fast model first; fall back if it's rate-limited or slow
   model: [
     { model: `google/${process.env.GEMINI_MODEL || "gemini-3.1-flash-lite"}`, maxRetries: 1 },

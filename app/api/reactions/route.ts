@@ -1,4 +1,5 @@
 import { sql } from "@/lib/db";
+import { linkReaction } from "@/lib/gee/memory";
 import { listReactions, toReaction } from "@/lib/records";
 import { getActor } from "@/lib/session";
 
@@ -24,9 +25,12 @@ export async function POST(req: Request) {
     const occurredAt = isNaN(occurred.getTime()) ? new Date() : occurred;
     const title = String(b?.title ?? "").trim().slice(0, 60) || null;
     const symptomTags = Array.isArray(b?.symptomTags) ? b.symptomTags.map((x: unknown) => String(x).trim()).filter(Boolean).slice(0, 8) : [];
-    const [row] = await sql`insert into reactions (user_id, suspected_trigger, symptoms, severity, duration, meal_name, occurred_at, title, symptom_tags)
-      values (${userId}, ${b?.suspectedTrigger ?? mealName}, ${symptoms}, ${severity}, ${duration}, ${mealName}, ${occurredAt.toISOString()}, ${title}, ${symptomTags})
+    const geeThreadId = typeof b?.geeThreadId === "string" && /^[\w-]{8,80}$/.test(b.geeThreadId) ? b.geeThreadId : null;
+    const [row] = await sql`insert into reactions (user_id, suspected_trigger, symptoms, severity, duration, meal_name, occurred_at, title, symptom_tags, gee_thread_id)
+      values (${userId}, ${b?.suspectedTrigger ?? mealName}, ${symptoms}, ${severity}, ${duration}, ${mealName}, ${occurredAt.toISOString()}, ${title}, ${symptomTags}, ${geeThreadId})
       returning *`;
+    // Tell Gee's memory that this check-in was saved as a reaction
+    if (geeThreadId) await linkReaction(userId, geeThreadId, row.id).catch(e => console.warn("[reactions] couldn't link Gee conversation:", e?.message));
     return Response.json(toReaction(row));
   } catch (e) { return fail(e, "Saving reaction"); }
 }

@@ -783,3 +783,8 @@ h1{font-size:27px}
 .not-food p{color:#7b6168;margin:6px 0 14px;font-size:13px;line-height:1.5}
 .not-food__actions{gap:8px;display:grid}
 .not-food__actions button{justify-content:center;align-items:center;gap:8px;display:flex}
+/* Reaction history: saved Talk to Gee conversation (Mastra memory in Neon) */
+.gee-transcript{border-top:1px solid var(--border);margin-top:10px;padding-top:10px}
+.gee-transcript summary{cursor:pointer;color:#b65070;align-items:center;gap:8px;font:800 13px Nunito,sans-serif;display:flex}
+.gee-transcript summary .buddy{width:24px;height:24px}
+.gee-transcript .gee-chat{max-height:none;margin-top:10px}

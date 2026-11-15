@@ -43,3 +43,7 @@ alter table meals add column if not exists ingredients jsonb not null default '[
 -- Short AI "attack tag" title and detected symptoms for each reaction
 alter table reactions add column if not exists title text;
 alter table reactions add column if not exists symptom_tags text[] not null default '{}';
+
+-- Gee check-ins: each conversation is a Mastra memory thread (Mastra creates its own mastra_* tables in this database).
+-- A saved reaction remembers which conversation it came from.
+alter table reactions add column if not exists gee_thread_id text;

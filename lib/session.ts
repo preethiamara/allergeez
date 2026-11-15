@@ -29,6 +29,9 @@ async function claimGuestData(userId: string) {
     await sql`update meals set user_id = ${userId} where user_id = ${GUEST_ID}`;
     await sql`update reactions set user_id = ${userId} where user_id = ${GUEST_ID}`;
     await sql`update profiles set id = ${userId} where id = ${GUEST_ID}`;
+    // Gee's saved check-ins (Mastra memory threads) move to the account too
+    const { claimGuestThreads } = await import("@/lib/gee/memory");
+    await claimGuestThreads(GUEST_ID, userId).catch(e => console.error("[session] moving Gee conversations failed", e));
   } catch (e) {
     claimed.delete(userId);
     console.error("[session] claiming guest data failed", e);

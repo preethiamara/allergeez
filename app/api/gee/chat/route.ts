@@ -4,6 +4,7 @@ import { getActor } from "@/lib/session";
 import { listMeals, listReactions, getProfile } from "@/lib/records";
 import { findLikelyIrritants } from "@/lib/irritants";
 import { ingredientsOnly } from "@/lib/ingredients";
+import { checkInTranscript, matchingCheckIns, pastCheckIns, recordTurn, type Turn } from "@/lib/gee/memory";
 import { detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 
 export const maxDuration = 60;
@@ -44,6 +45,21 @@ async function fallbackTurn(messages: Msg[], userId: string, reactionTime: strin
   };
 }
 
+/** GET /api/gee/chat?thread=ID: the saved conversation for one check-in (only the owner can read it). */
+export async function GET(req: Request) {
+  const id = new URL(req.url).searchParams.get("thread") ?? "";
+  if (!/^[\w-]{8,80}$/.test(id)) return Response.json({ error: "Missing conversation id" }, { status: 400 });
+  const { userId } = await getActor();
+  try {
+    const messages = await checkInTranscript(userId, id);
+    if (!messages) return Response.json({ error: "Conversation not found" }, { status: 404 });
+    return Response.json({ messages });
+  } catch (e: any) {
+    console.error("[gee] loading conversation failed", e);
+    return Response.json({ error: "Couldn’t load the conversation" }, { status: 500 });
+  }
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
   const messages: Msg[] = Array.isArray(body?.messages)
@@ -53,9 +69,21 @@ export async function POST(req: Request) {
   if (!messages.some(m => m.role === "user")) return Response.json({ error: "Say something first" }, { status: 400 });
   const reactionTime = body?.reactionTime && !isNaN(Date.parse(body.reactionTime)) ? new Date(body.reactionTime).toISOString() : new Date().toISOString();
   const { userId } = await getActor();
+  // One Mastra memory thread (stored in Neon) per check-in
+  const threadId = typeof body?.threadId === "string" && /^[\w-]{8,80}$/.test(body.threadId) ? body.threadId : "";
 
   // Safety check that never depends on the AI
   const lastUser = [...messages].reverse().find(m => m.role === "user")!.content;
+  const firstUser = messages.findIndex(m => m.role === "user");
+  const opening: Turn[] = messages.slice(0, firstUser).filter(m => m.role === "assistant");
+  /** Send the reply, after saving this exchange to Gee's memory (a memory failure never blocks the reply). */
+  const respond = async (out: CheckIn & Record<string, unknown>) => {
+    if (threadId) {
+      try { await recordTurn({ userId, threadId, reactionTime, opening, user: lastUser, reply: String(out.reply ?? ""), checkIn: out }); }
+      catch (e: any) { console.warn("[gee] couldn't save to memory:", String(e?.message ?? e).slice(0, 160)); }
+    }
+    return Response.json({ ...out, threadId: threadId || undefined });
+  };
   const seriousNow = isSerious(lastUser);
 
   const ctx = new RequestContext();
@@ -65,7 +93,14 @@ export async function POST(req: Request) {
 
   try {
     // Brief the agent with the user's meals before the reaction and their profile (saves tool round-trips)
-    const [meals, profile] = await Promise.all([listMeals(userId), getProfile(userId)]);
+    const saidSoFar = messages.filter(m => m.role === "user").map(m => m.content).join(" ");
+    const noMemory = (e: any) => { console.warn("[gee] memory unavailable:", String(e?.message ?? e).slice(0, 120)); return [] as string[]; };
+    const [meals, profile, memory, matches] = await Promise.all([
+      listMeals(userId), getProfile(userId),
+      pastCheckIns(userId, threadId).catch(noMemory),
+      // Only point out a repeat pattern once: on the first user turn of this check-in
+      messages.filter(m => m.role === "user").length === 1 ? matchingCheckIns(userId, saidSoFar, threadId).catch(e => { console.warn("[gee] memory match failed:", String(e?.message ?? e).slice(0, 160)); return []; }) : Promise.resolve([]),
+    ]);
     const at = new Date(reactionTime).getTime();
     const recent = meals
       .filter(m => { const gap = at - new Date(m.createdAt).getTime(); return gap >= -30 * 60e3 && gap <= 8 * 3600e3; })
@@ -75,6 +110,8 @@ export async function POST(req: Request) {
       `The check-in started at ${now}.`,
       `Known allergens: ${profile.allergens.join(", ") || "none listed"}.`,
       recent.length ? `Meals logged in the 8 hours before:\n${recent.join("\n")}` : "No meals logged in the 8 hours before.",
+      memory.length ? `Your memory of this person's earlier check-ins (newest first):\n${memory.join("\n")}` : "This is their first check-in with you.",
+      matches.length ? `PATTERN FROM YOUR MEMORY (mention this once, briefly, in this reply, e.g. "You had hives after shrimp last time too."): ${matches.map(x => x.text).join(" | ")}` : "",
       body?.known ? `Already filled in the app: ${JSON.stringify(body.known)}` : "",
     ].filter(Boolean).join("\n");
 
@@ -89,7 +126,9 @@ export async function POST(req: Request) {
     const r = res as any;
     const out = r.object as CheckIn | undefined;
     if (!out?.reply) throw new Error(`no structured reply (finish=${r.finishReason}; text=${String(r.text ?? "").slice(0, 160)})`);
-    if (out.emergency || seriousNow) return Response.json({ ...out, emergency: true, done: false, source: "mastra" });
+    if (out.emergency || seriousNow) return respond({ ...out, emergency: true, done: false, source: "mastra" });
+    // Repeat pattern from memory: make sure Gee says it (the fast model sometimes skips it)
+    if (matches.length && !/last time|remember|before|again|earlier|previous/i.test(out.reply)) out.reply = `${matches[0].spoken} ${out.reply}`;
 
     // 2) Check-in complete: Gee runs the irritant-detection tool and explains the result
     if (out.done) {
@@ -103,18 +142,18 @@ export async function POST(req: Request) {
         const fr = final as any;
         const toolOut = (fr.toolResults ?? []).map((t: any) => t.result ?? t.payload?.result).find((x: any) => x?.likelyIrritants);
         const irritants = (toolOut?.likelyIrritants ?? []).slice(0, 3).map((x: any) => ({ name: x.name, confidence: x.confidence, evidence: x.evidence }));
-        return Response.json({ ...out, reply: String(fr.text || out.reply).trim(), likelyIrritants: irritants, toolUsed: !!toolOut, source: "mastra" });
+        return respond({ ...out, reply: String(fr.text || out.reply).trim(), likelyIrritants: irritants, toolUsed: !!toolOut, source: "mastra" });
       } catch (e: any) {
         console.warn("[gee] irritant step failed, using the algorithm directly:", String(e?.message ?? e).slice(0, 160));
         const [allMeals, reactions] = await Promise.all([listMeals(userId), listReactions(userId)]);
         const ranked = findLikelyIrritants(allMeals, [...reactions, { id: -1, food: out.fields.food, severity: out.fields.severity ?? 5, occurredAt: reactionTime }], profile.allergens, 3);
-        return Response.json({ ...out, likelyIrritants: ranked.map(x => ({ name: x.name, confidence: x.confidence, evidence: x.why })), source: "mastra" });
+        return respond({ ...out, likelyIrritants: ranked.map(x => ({ name: x.name, confidence: x.confidence, evidence: x.why })), source: "mastra" });
       }
     }
-    return Response.json({ ...out, source: "mastra" });
+    return respond({ ...out, source: "mastra" });
   } catch (e: any) {
     console.warn("[gee] agent failed, using rule-based fallback:", String(e?.message ?? e).slice(0, 200));
     const out = await fallbackTurn(messages, userId, reactionTime);
-    return Response.json({ ...out, emergency: out.emergency || seriousNow, source: "fallback" });
+    return respond({ ...out, emergency: out.emergency || seriousNow, source: "fallback" });
   }
 }
