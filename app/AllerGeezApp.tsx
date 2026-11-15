@@ -557,7 +557,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
 
   // ---- Conversation with the Gee agent (Mastra) ----
-  type ChatMsg = { role: "user" | "assistant"; content: string };
+  type ChatMsg = { role: "user" | "assistant"; content: string ; held?: boolean };
   type CheckInState = { fields: { symptoms: string[]; timing: string; severity: number | null; food: string; duration: string }; asking: string; done: boolean; irritants: { name: string; confidence: string; evidence: string }[]; source?: string };
   const GREETING = "Hi, I’m Gee. I’m here with you. What are you feeling right now?";
   const [geeChat, setGeeChat] = useState<ChatMsg[]>([]);
@@ -566,6 +566,8 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const [handsFree, setHandsFree] = useState(true);
   const [checkIn, setCheckIn] = useState<CheckInState | null>(null);
   const chatRef = useRef<ChatMsg[]>([]); chatRef.current = geeChat;
+  /** Update the chat and the ref together, so back-to-back messages never read a stale conversation. */
+  const updateChat = (fn: (h: ChatMsg[]) => ChatMsg[]) => { const next = fn(chatRef.current); chatRef.current = next; setGeeChat(next); };
   const handsFreeRef = useRef(handsFree); handsFreeRef.current = handsFree;
   const chatEnd = useRef<HTMLDivElement>(null);
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [geeChat, geeThinking]);
@@ -594,11 +596,21 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     if (f.symptoms.length) setReactionTag(attackTag(detectSymptoms(f.symptoms.join(", ")).length ? detectSymptoms(f.symptoms.join(", ")) : f.symptoms.map(x => x.charAt(0).toUpperCase() + x.slice(1)), userText));
   }
 
+  // If they speak again while Gee is still thinking, hold it and send it right after Gee answers
+  const geeInFlight = useRef(false);
+  const pendingSay = useRef("");
   async function sendToGee(text: string) {
     const t = text.trim();
     if (!t) return;
-    const history = [...chatRef.current, { role: "user" as const, content: t }];
-    setGeeChat(history);
+    if (geeInFlight.current) {
+      pendingSay.current = [pendingSay.current, t].filter(Boolean).join(". ");
+      updateChat(h => [...h, { role: "user", content: t, held: true }]);
+      setChatInput("");
+      return;
+    }
+    geeInFlight.current = true;
+    const history: ChatMsg[] = [...chatRef.current.filter(m => !m.held), { role: "user" as const, content: t }];
+    updateChat(() => history);
     setChatInput("");
     const userText = history.filter(m => m.role === "user").map(m => m.content).join(". ");
     voiceTextRef.current = userText;
@@ -610,7 +622,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
         body: JSON.stringify({ messages: history, threadId: geeThreadId, reactionTime: occurredAt ? new Date(occurredAt).toISOString() : undefined }),
       });
       setGeeThinking(false);
-      setGeeChat(h => [...h, { role: "assistant", content: out.reply }]);
+      updateChat(h => [...h.filter(m => !m.held), { role: "assistant", content: out.reply }, ...h.filter(m => m.held)]);
       setCheckIn({ fields: out.fields, asking: out.asking, done: out.done, irritants: out.likelyIrritants ?? [], source: out.source });
       applyCheckIn(out.fields, userText);
       if (out.emergency) { geeSay(out.reply); setEmergencyOpen(true); return; }
@@ -619,6 +631,14 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     } catch (e: any) {
       setGeeThinking(false);
       setVoiceMsg(e?.message ?? "Gee couldn’t answer. Try again.");
+    } finally {
+      geeInFlight.current = false;
+      const next = pendingSay.current;
+      if (next) {
+        pendingSay.current = "";
+        // Move the held message(s) after Gee's answer and send them as the next turn
+        sendToGee(next); // its bubble moves after Gee's answer (history skips held messages)
+      }
     }
   }
 
@@ -665,7 +685,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const geeBusy = recorder.state === "transcribing";
   const toggleVoice = () => {
     if (recorder.state === "listening") { recorder.stop(); return; }
-    if (geeBusy) return;
+    if (geeBusy) return; // still writing down what they just said
     if (listening) { recognizer.current?.stop(); setListening(false); return; }
     startVoice(screen === "gee-voice" ? "gee-voice" : "reaction-form");
   };
@@ -1211,7 +1231,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             <AppHeader title="Talk to Gee" onBack={() => { stopVoice(); go("reaction-form"); }} onEmergency={openEmergency} />
             <section className="gee-chat-hero">
               <button className={`gee-voice-orb gee-voice-orb--small ${geeListening ? "is-listening" : ""} ${geeSpeaking ? "is-speaking" : ""}`} onClick={toggleVoice}
-                aria-label={geeListening ? "Stop and send what I said" : "Talk to Gee"} disabled={geeBusy || geeThinking}>
+                aria-label={geeListening ? "Stop and send what I said" : "Talk to Gee"}>
                 <Buddy />
                 <span className="gee-microphone"><Icon name={geeSpeaking ? "speaker" : "microphone"} size={20} strokeWidth={2.1} /></span>
               </button>
