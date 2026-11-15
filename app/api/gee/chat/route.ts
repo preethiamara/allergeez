@@ -1,5 +1,6 @@
 import { RequestContext } from "@mastra/core/request-context";
 import { checkInSchema, geeAgent, type CheckIn } from "@/lib/gee/agent";
+import { appTools, type GeeCard } from "@/lib/gee/tools";
 import { getActor } from "@/lib/session";
 import { listMeals, listReactions, getProfile } from "@/lib/records";
 import { findLikelyIrritants } from "@/lib/irritants";
@@ -7,7 +8,8 @@ import { ingredientsOnly } from "@/lib/ingredients";
 import { checkInTranscript, matchingCheckIns, pastCheckIns, recordTurn, type Turn } from "@/lib/gee/memory";
 import { detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
+const NO_REQUEST: CheckIn["request"] = { type: "none", food: "", place: "", message: "" };
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -27,9 +29,9 @@ async function fallbackTurn(messages: Msg[], userId: string, reactionTime: strin
   if (/how long|still/i.test(lastQ) && lastA) duration = lastA;
   if (/scale|how bad|1 to 10|intense/i.test(lastQ) && severity === null && lastA) severity = Number(lastA.match(/\d+/)?.[0]) || (intensity ? 5 : null);
   if (isSerious(said)) {
-    return { reply: "That could be serious. Use your epinephrine if you have it and call 911 now.", fields: { symptoms, timing, severity, food, duration }, asking: "none", done: false, emergency: true, likelyIrritants: [] };
+    return { reply: "That could be serious. Use your epinephrine if you have it and call 911 now.", fields: { symptoms, timing, severity, food, duration }, asking: "none", done: false, emergency: true, likelyIrritants: [], request: NO_REQUEST };
   }
-  const ask = (asking: CheckIn["asking"], reply: string): CheckIn => ({ reply, fields: { symptoms, timing, severity, food, duration }, asking, done: false, emergency: false, likelyIrritants: [] });
+  const ask = (asking: CheckIn["asking"], reply: string): CheckIn => ({ reply, fields: { symptoms, timing, severity, food, duration }, asking, done: false, emergency: false, likelyIrritants: [], request: NO_REQUEST });
   if (!symptoms.length) return ask("symptoms", "What are you feeling right now, and where on your body?");
   if (!timing) return ask("timing", "Got it. When did it start? Was it soon after eating?");
   if (severity === null) return ask("severity", "On a scale of 1 to 10, how bad is it?");
@@ -41,7 +43,7 @@ async function fallbackTurn(messages: Msg[], userId: string, reactionTime: strin
   return {
     reply: `Thanks, I have everything. ${top.length ? `Possible irritants: ${top.join(" and ")}. ` : ""}You can review and save your check-in.`,
     fields: { symptoms, timing, severity, food, duration }, asking: "none", done: true, emergency: false,
-    likelyIrritants: ranked.slice(0, 3).map(r => ({ name: r.name, confidence: r.confidence, evidence: r.why })),
+    likelyIrritants: ranked.slice(0, 3).map(r => ({ name: r.name, confidence: r.confidence, evidence: r.why })), request: NO_REQUEST,
   };
 }
 
@@ -130,7 +132,52 @@ export async function POST(req: Request) {
     // Repeat pattern from memory: make sure Gee says it (the fast model sometimes skips it)
     if (matches.length && !/last time|remember|before|again|earlier|previous/i.test(out.reply)) out.reply = `${matches[0].spoken} ${out.reply}`;
 
-    // 2) Check-in complete: Gee runs the irritant-detection tool and explains the result
+    // 2) They asked for an app feature (food check, safe food nearby, text their contact): Gee calls that tool
+    const req = out.request ?? NO_REQUEST;
+    const TOOLS = { check_food: ["checkFoodSafety", "check-food-safety"], find_safe_food: ["findSafeFoodNearby", "find-safe-food-nearby"], text_contact: ["prepareContactMessage", "prepare-contact-message"] } as const;
+    if (req.type !== "none" && !(req.type === "find_safe_food" && !req.place.trim()) && !(req.type === "check_food" && !req.food.trim())) {
+      const [key, toolId] = TOOLS[req.type];
+      const args: any = req.type === "check_food" ? { food: req.food } : req.type === "find_safe_food" ? { place: req.place, craving: req.food || undefined } : { message: req.message || "I'm having an allergic reaction. Can you call me?" };
+      let result: any = null, reply = "", toolUsed = false;
+      try {
+        const step = await withTimeout(geeAgent.generate(
+          [{ role: "system", content: briefing }, ...messages,
+           { role: "user", content: `(App note: they asked for this. Call ${toolId} with ${JSON.stringify(args)} exactly once, then reply in 1–2 short spoken sentences using only the tool's result.${!out.done && out.asking !== "none" ? ` Then ask your next check-in question (${out.asking}).` : ""})` }] as any,
+          { requestContext: ctx, maxSteps: 3, toolChoice: "auto" },
+        ), req.type === "find_safe_food" ? 50_000 : 20_000) as any;
+        result = (step.toolResults ?? []).map((t: any) => t.result ?? t.payload?.result).find((x: any) => x && "card" in x) ?? null;
+        toolUsed = !!result;
+        reply = String(step.text ?? "").trim();
+      } catch (e: any) { console.warn("[gee] app tool step failed:", String(e?.message ?? e).slice(0, 160)); }
+      // The model answered without calling it: ask the agent again, this time required to call that tool
+      if (!result) {
+        try {
+          const forced = await withTimeout(geeAgent.generate(
+            [{ role: "system", content: briefing }, ...messages,
+             { role: "user", content: `(App note: call ${toolId} with ${JSON.stringify(args)}.)` }] as any,
+            { requestContext: ctx, maxSteps: 1, toolChoice: { type: "tool", toolName: key } },
+          ), req.type === "find_safe_food" ? 50_000 : 15_000) as any;
+          result = (forced.toolResults ?? []).map((t: any) => t.result ?? t.payload?.result).find((x: any) => x && "card" in x) ?? null;
+          toolUsed = !!result;
+          if (result) reply = ""; // the template below phrases the answer from the tool's result
+        } catch (e: any) { console.warn("[gee] forced tool step failed:", String(e?.message ?? e).slice(0, 160)); }
+      }
+      // Still nothing (AI down / timed out): run the same tool directly so the person still gets an answer
+      if (!result) {
+        try { result = await (appTools[key].execute as any)(args, { requestContext: ctx }); } catch (e) { console.warn("[gee] direct tool call failed:", e); }
+      }
+      if (!reply && result) {
+        reply = req.type === "check_food"
+          ? (result.verdict === "avoid" ? `I'd avoid ${req.food}: ${result.reasons[0] ?? "it may contain something you react to"}.` : `${req.food} looks okay for you, but check the label or ask the restaurant to be sure.`)
+          : req.type === "find_safe_food"
+            ? (result.places?.length ? `Try ${result.places[0].name}: ${result.places[0].picks[0]?.dish} looks safe for you. I put a few options below.` : result.message)
+            : (result.ready ? `I wrote a message to ${result.contactName}. Tap the button to send it.` : result.message);
+      }
+      const cards: GeeCard[] = result?.card ? [result.card] : [];
+      return respond({ ...out, reply: reply || out.reply, cards, toolUsed, source: "mastra" });
+    }
+
+    // 3) Check-in complete: Gee runs the irritant-detection tool and explains the result
     if (out.done) {
       try {
         const f = out.fields;

@@ -1086,3 +1086,17 @@ h1{font-size:27px}
 }
 /* Talk to Gee: the Gee mic stays pinned at the top while the chat scrolls */
 .gee-chat-screen .gee-chat-hero{z-index:5;background:linear-gradient(#fffcf9 82%,#fffcf900);margin:0 -4px 8px;padding:6px 4px 10px;position:sticky;top:0}
+/* Talk to Gee: results from Gee's app tools */
+.gee-msg-group{flex-direction:column;gap:6px;display:flex}
+.gee-card{background:#fff;border:1px solid var(--border);border-radius:16px;gap:4px;margin-left:34px;padding:10px 12px;display:grid;box-shadow:0 4px 14px #5130390a}
+.gee-card strong{color:var(--ink);font:800 14px Nunito,sans-serif}
+.gee-card p{color:#5f474f;margin:0;font-size:12.5px;line-height:1.4}
+.gee-card small{color:var(--muted);font-size:11px}
+.gee-card__label{color:#b65070!important;text-transform:uppercase;letter-spacing:.4px;align-items:center;gap:5px;font:800 10px Nunito,sans-serif!important;display:flex}
+.gee-card--avoid{background:#fdf2f2;border-color:#f8d7da}
+.gee-card--ask{background:#fff8ec;border-color:#ffe0b2}
+.gee-card--ok{background:#f1f8f3;border-color:#d4edda}
+.gee-card__place{border-top:1px solid #0000000d;padding-top:6px}
+.gee-card__place:first-of-type{border-top:0;padding-top:0}
+.gee-card .inline-link{justify-self:start;font-size:12px}
+.gee-card__send{justify-content:center;gap:6px;min-height:42px;margin-top:4px;font-size:15px;display:flex}

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getProfile, listMeals, listReactions } from "@/lib/records";
 import { findLikelyIrritants } from "@/lib/irritants";
 import { ingredientsOnly } from "@/lib/ingredients";
+import { appTools } from "@/lib/gee/tools";
 
 // "Gee": a Mastra agent that runs the reaction check-in conversation. It asks for whatever is missing,
 // looks up the user's meals and history with tools, and runs the likely-irritant algorithm.
@@ -92,14 +93,21 @@ Do not call any tool more than once per turn. Never call a tool before you know 
 7. Consider more than the big allergens: food additives (sulfites, colorings like Red 40, MSG, preservatives, sweeteners) and compounds foods are naturally high in (histamine, nickel, salicylates, tyramine). The briefing lists these for each recent meal. If one of the user's known allergens is among them, mention it briefly.
 8. INGREDIENTS, NOT PRODUCTS: a likely irritant is always an ingredient (e.g. walnuts, pea protein), an additive (e.g. sulfites) or an allergy group (e.g. Tree nuts), never a whole product, brand or dish name (not "Pure Organic Fruit Bars" or "pad thai"). If the user names a product or dish, record it as the food, and talk about the ingredients in it that could be the cause. When you summarize likely irritants, name ingredients or groups only.
 9. MEMORY: the briefing may list this person's earlier check-ins (your memory, saved between conversations). If today's food, ingredient or symptoms match an earlier check-in, say so ONCE, in a few words, the first time you notice it (e.g. "You had hives after shrimp tacos last time too."), then carry on with your question. That pattern is useful for them and their doctor. Never read the whole history back, and never treat a past answer as today's answer.
-10. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.`,
+10. Never invent facts they didn't say. Never recommend medication other than their own prescribed epinephrine and calling 911.
+11. APP TOOLS: you can also help beyond the check-in. If they ASK one of these, set "request" so the app runs the tool (otherwise request.type is "none"):
+   - "Can I eat X?" / "Is X safe for me?" → request.type "check_food", request.food = X. (Tool: check-food-safety)
+   - "Where can I eat near Y?" / "Find somewhere safe to eat" → request.type "find_safe_food", request.place = Y (ask where they are first if they didn't say), request.food = what they feel like if they said. (Tool: find-safe-food-nearby)
+   - "Text/tell/call my mom/contact" or they want someone to know → request.type "text_contact", request.message = a short first-person text about what's happening. (Tool: prepare-contact-message)
+   When you set a request, your reply can just say what you're doing ("Let me check that for you."). Keep collecting the check-in afterwards.
+   When you are given a tool result: answer in 1–2 short spoken sentences using only its facts (best one or two options, or the verdict and main reason), then go back to the next check-in question if any are missing.`,
   // Fast model first; fall back if it's rate-limited or slow
   model: [
     { model: `google/${process.env.GEMINI_MODEL || "gemini-3.1-flash-lite"}`, maxRetries: 1 },
     { model: "google/gemini-3.5-flash", maxRetries: 0 },
   ],
-  // Meals and profile are put in the briefing by the server; the agent only needs the algorithm
-  tools: { findIrritants },
+  // Meals and profile are put in the briefing by the server. Tools: the irritant algorithm plus app features
+  // (food check, safe food nearby, message to emergency contact)
+  tools: { findIrritants, ...appTools },
 });
 
 export const checkInSchema = z.object({
@@ -114,6 +122,12 @@ export const checkInSchema = z.object({
   asking: z.enum(["symptoms", "detail", "timing", "severity", "food", "duration", "none"]).describe("Which field the reply asks about"),
   done: z.boolean().describe("True when symptoms, timing, severity and food are known"),
   emergency: z.boolean().describe("True if symptoms sound like a severe reaction"),
+  request: z.object({
+    type: z.enum(["none", "check_food", "find_safe_food", "text_contact"]),
+    food: z.string().describe("Food to check, or what they feel like eating; '' if none"),
+    place: z.string().describe("City/ZIP/address for find_safe_food; '' if none"),
+    message: z.string().describe("Text for their emergency contact; '' if none"),
+  }).describe("An app feature they just asked for; type 'none' if they didn't ask for one"),
   likelyIrritants: z.array(z.object({ name: z.string().describe("An ingredient, additive or allergy group, never a product or dish name"), confidence: z.string(), evidence: z.string() })).describe("From find-likely-irritants, only when done; else []"),
 });
 export type CheckIn = z.infer<typeof checkInSchema>;
