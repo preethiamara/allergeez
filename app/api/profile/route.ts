@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { USER_ID as ID } from "@/lib/records";
+import { getActor } from "@/lib/session";
 
 const fail = (e: any, what: string) => {
   console.error(`[profile] ${what}`, e);
@@ -8,6 +8,7 @@ const fail = (e: any, what: string) => {
 
 export async function GET() {
   try {
+    const { userId: ID } = await getActor();
     const rows = await sql`select * from profiles where id = ${ID}`;
     return Response.json(rows[0] ?? { allergens: [], contact_name: "", contact_phone: "" });
   } catch (e) { return fail(e, "Loading profile"); }
@@ -15,6 +16,7 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   try {
+    const { userId: ID } = await getActor();
     const body = await req.json().catch(() => null);
     if (!body || !Array.isArray(body.allergens)) return Response.json({ error: "allergens must be a list" }, { status: 400 });
     const allergens = [...new Set(

@@ -1,7 +1,10 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
-import type { Meal, Profile, Reaction } from "@/lib/records";
-import { AppHeader, Buddy, Icon } from "./ui";
+import type { Ingredient, Meal, Profile, Reaction } from "@/lib/records";
+import type { SessionUser } from "@/lib/auth/server";
+import { AppHeader, Buddy, BuddyInBowl, Icon } from "./ui";
+import ProfileScreen, { initialsOf } from "./ProfileScreen";
+import IngredientModal from "./IngredientModal";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
 import CameraCapture from "./CameraCapture";
 import type { FoodProduct, Nutrients } from "@/lib/nutrition";
@@ -9,7 +12,8 @@ import { allergenMatches } from "@/lib/allergens";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
-  | "gee-voice" | "reaction-form" | "reaction-review" | "reaction-history" | "emergency-guide";
+  | "gee-voice" | "reaction-form" | "reaction-review" | "reaction-history" | "emergency-guide"
+  | "profile" | "test-food";
 
 type NutritionEstimate = { portion?: string; kcal?: number; protein?: number; carbs?: number; fat?: number; sugars?: number; fiber?: number; sodiumMg?: number };
 type ScanResult = {
@@ -115,8 +119,8 @@ function NutritionFacts({ food, allergens }: { food: FoodProduct; allergens: str
   );
 }
 
-export default function AllerGeezApp({ initialMeals, initialReactions, initialProfile, loadError }: {
-  initialMeals: Meal[]; initialReactions: Reaction[]; initialProfile: Profile; loadError?: string;
+export default function AllerGeezApp({ user, initialMeals, initialReactions, initialProfile, loadError }: {
+  user: SessionUser | null; initialMeals: Meal[]; initialReactions: Reaction[]; initialProfile: Profile; loadError?: string;
 }) {
   const [screen, setScreen] = useState<Screen>("home");
   const [emergencyOpen, setEmergencyOpen] = useState(false);
@@ -128,6 +132,8 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
   const [reactions, setReactions] = useState(initialReactions);
   const [mealImages, setMealImages] = useState<Record<number, string>>({});
   const [reactionImages, setReactionImages] = useState<Record<number, string>>({});
+  const [editingMeal, setEditingMeal] = useState<{ id: number; name: string; details: string } | null>(null);
+  const [ingredientMealId, setIngredientMealId] = useState<number | null>(null);
 
   // profile
   const [allergens, setAllergens] = useState<string[]>(initialProfile.allergens);
@@ -139,7 +145,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
   // meal flow
   const [desc, setDesc] = useState("");
   const [photo, setPhoto] = useState<string>();
-  const [cameraFor, setCameraFor] = useState<"meal" | "reaction" | null>(null);
+  const [cameraFor, setCameraFor] = useState<"meal" | "reaction" | "test" | null>(null);
   const [foodQuery, setFoodQuery] = useState("");
   const [foodSearch, setFoodSearch] = useState<{ loading: boolean; products?: FoodProduct[]; error?: string; query?: string }>({ loading: false });
   const [openFood, setOpenFood] = useState<string>();
@@ -159,6 +165,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
   const [mealName, setMealName] = useState("");
   const [reactionPhoto, setReactionPhoto] = useState<string>();
   const reactionInput = useRef<HTMLInputElement>(null);
+  const testInput = useRef<HTMLInputElement>(null);
 
   // voice
   const [listening, setListening] = useState(false);
@@ -212,9 +219,9 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
     if (file) handleMealFile(file);
   }
 
-  async function handleMealFile(file: File) {
+  async function handleMealFile(file: File, target: Screen = "review") {
     setCameraFor(null);
-    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setScan({ loading: true }); go("review");
+    setDesc(""); setSelectedFoods([]); setPhotoMatch(null); setScan({ loading: true }); go(target);
     const image = await prepareImage(file);
     setPhoto(`data:${image.mimeType};base64,${image.data}`);
     lastScanInput.current = { image };
@@ -275,7 +282,11 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
     try {
       const meal: Meal = await jsonFetch("/api/meals", {
         method: "POST",
-        body: JSON.stringify({ name: scan.result?.name || (fallback.length > 34 ? "New meal" : fallback), details, flags: [...mealFlags.mine, ...mealFlags.common] }),
+        body: JSON.stringify({
+          name: scan.result?.name || (fallback.length > 34 ? "New meal" : fallback), details,
+          flags: [...mealFlags.mine, ...mealFlags.common],
+          ingredients: [...foodNames, ...(scan.result?.ingredients ?? [])].slice(0, 40).map(name => ({ name, flagged: false })),
+        }),
       });
       setMeals(m => [meal, ...m]);
       if (photo) setMealImages(m => ({ ...m, [meal.id]: photo }));
@@ -293,6 +304,32 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
     try { await jsonFetch(`/api/meals?id=${id}`, { method: "DELETE" }); setMeals(m => m.filter(x => x.id !== id)); }
     catch (e: any) { setSaveError(e.message); }
   }
+
+  /** Save a name/details edit or a new ingredient list; returns an error message or null. */
+  async function updateMeal(id: number, patch: { name?: string; details?: string; ingredients?: Ingredient[] }) {
+    try {
+      const meal: Meal = await jsonFetch("/api/meals", { method: "PATCH", body: JSON.stringify({ id, ...patch }) });
+      setMeals(list => list.map(m => (m.id === id ? meal : m)));
+      return null;
+    } catch (e: any) { return e.message as string; }
+  }
+
+  // ---------- test a food (check without logging) ----------
+  const resetTest = () => {
+    scanSeq.current++;
+    setDesc(""); setPhoto(undefined); setScan({ loading: false }); setSaved(false); setSaveError("");
+    setSelectedFoods([]); setFoodQuery(""); setFoodSearch({ loading: false }); setPhotoMatch(null); setOpenFood(undefined);
+  };
+  const productText = (f: FoodProduct) => `Packaged food: ${f.name}${f.brand ? ` (${f.brand})` : ""}.` +
+    (f.ingredients ? ` Ingredients: ${f.ingredients}` : "") + (f.allergens.length ? ` Listed allergens: ${f.allergens.join(", ")}.` : "") +
+    (f.traces.length ? ` May contain: ${f.traces.join(", ")}.` : "");
+  function testProduct(f: FoodProduct) {
+    setPhoto(undefined); setPhotoMatch(null); setDesc(""); setSaved(false);
+    setSelectedFoods([f]); setFoodSearch({ loading: false }); setOpenFood(undefined);
+    lastScanInput.current = { text: productText(f) };
+    runScan({ text: productText(f) });
+  }
+  const testHasResult = !!(photo || selectedFoods.length || scan.loading || scan.result || scan.error);
 
   // ---------- reactions ----------
   const startReaction = () => {
@@ -378,6 +415,21 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
     setNewAllergen(""); setAllergens(next); saveProfile(next);
   };
   const removeAllergen = (a: string) => { const next = allergens.filter(x => x !== a); setAllergens(next); saveProfile(next); };
+  async function saveContact(c: { name: string; phone: string }) {
+    await jsonFetch("/api/profile", { method: "PUT", body: JSON.stringify({ allergens, contact_name: c.name, contact_phone: c.phone }) });
+    setContact(c);
+  }
+
+  // Ingredients you flagged as suspected triggers, across all meals
+  const flaggedIngredients = useMemo(() => {
+    const counts = new Map<string, { name: string; meals: number }>();
+    for (const m of meals) for (const i of m.ingredients) if (i.flagged) {
+      const k = i.name.toLowerCase();
+      counts.set(k, { name: i.name, meals: (counts.get(k)?.meals ?? 0) + 1 });
+    }
+    return [...counts.values()].sort((a, b) => b.meals - a.meals);
+  }, [meals]);
+  const ingredientMeal = meals.find(m => m.id === ingredientMealId);
 
   // Allergens that appeared in meals logged right before a reaction.
   const patterns = useMemo(() => {
@@ -405,37 +457,48 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
         {screen === "home" && (
           <div className="screen home-screen">
             <header className="home-topbar">
-              <div className="brand"><Buddy small /><span>AllerGeez</span></div>
-              <button className="avatar" aria-label="Open profile" onClick={() => go("allergens")}>ME</button>
+              <div className="brand"><Buddy small /><span>allergeez</span></div>
+              <button className="avatar" aria-label={user ? "Open your profile" : "Sign in or open profile"} onClick={() => go("profile")}>
+                {user?.image ? <img src={user.image} alt="" referrerPolicy="no-referrer" /> : user ? initialsOf(user) : <Icon name="user" size={20} />}
+              </button>
             </header>
             <section className="welcome">
               <div className="welcome__copy">
                 <p className="eyebrow welcome__eyebrow">Your food &amp; reaction buddy</p>
-                <h1 className="welcome__title">Hey there, how can I help today?</h1>
+                <h1 className="welcome__title">
+                  <span>{user?.name ? `Hi ${user.name.split(" ")[0]}, I’m Gee!` : "Hi, I’m Gee!"}</span>
+                  <span className="welcome__subtitle">Let’s keep those allergies away</span>
+                </h1>
               </div>
               <Buddy />
             </section>
+            <button className="emergency-button emergency-button--home" style={{ height: 80 }} onClick={openEmergency}>
+              <span className="emergency-button__icon"><Icon name="alert" size={24} /></span>
+              <span className="emergency-button__copy"><strong>Emergency help</strong><small>For severe symptoms</small></span>
+              <Icon name="arrow" />
+            </button>
             <section className="action-grid" aria-label="Main actions">
-              <button className="action-card action-card--primary" style={{ height: 80 }} onClick={() => go("record")}>
-                <span className="action-card__icon"><Icon name="plus" size={27} strokeWidth={2.2} /></span>
+              <button className="action-card" style={{ height: 80 }} onClick={() => go("record")}>
+                <span className="action-card__icon action-card__icon--rose"><Icon name="food" size={25} strokeWidth={2} /></span>
                 <span><strong>Record meal</strong><small>Log what you ate</small></span>
                 <Icon name="arrow" />
               </button>
               <button className="action-card" style={{ height: 80 }} onClick={startReaction}>
-                <span className="action-card__icon action-card__icon--cream"><Icon name="spark" size={25} /></span>
+                <span className="action-card__icon action-card__icon--cream"><Icon name="medical" size={24} /></span>
                 <span><strong>Record reaction</strong><small>Tell me what happened</small></span>
                 <Icon name="arrow" />
               </button>
             </section>
-            <button className="emergency-button emergency-button--home" style={{ height: 80 }} onClick={openEmergency}>
-              <span><Icon name="alert" size={21} /> Emergency help</span>
-              <small>For trouble breathing or severe symptoms</small>
+            <button className="action-card action-card--test-food" style={{ height: 76, marginTop: 12, width: "100%" }} onClick={() => { resetTest(); go("test-food"); }}>
+              <span className="action-card__icon action-card__icon--peach"><Icon name="flask" size={25} /></span>
+              <span><strong>Test a food!</strong><small>Check ingredients &amp; allergy risk</small></span>
+              <Icon name="arrow" />
             </button>
             {saveError && <p className="save-error">{saveError}</p>}
             <nav className="bottom-nav" aria-label="App navigation">
               <button className="is-active" onClick={() => go("home")}><Icon name="home" /><span>Home</span></button>
               <button onClick={() => go("history")}><Icon name="history" /><span>Meal history</span></button>
-              <button onClick={() => go("reaction-history")}><Icon name="spark" /><span>Reaction history</span></button>
+              <button onClick={() => go("reaction-history")}><Icon name="medical" /><span>Reaction history</span></button>
               <button onClick={() => go("allergens")}><Icon name="shield" /><span>Allergens</span></button>
             </nav>
           </div>
@@ -563,9 +626,9 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
               <section className="success-state">
                 <div className="success-state__mark"><Icon name="check" size={35} strokeWidth={2.4} /></div>
                 <p className="eyebrow">All saved</p>
-                <h2>Nice job checking in.</h2>
+                <h2>Food logged. Delicious!</h2>
                 <p>That’s one more clue to help us understand what makes you feel your best.</p>
-                <Buddy />
+                <BuddyInBowl />
                 <button className="primary-button" onClick={resetMeal}>Back to home</button>
                 <button className="text-button" onClick={() => go("history")}>View food history</button>
               </section>
@@ -617,7 +680,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                   </div>
                 )}
                 <div className="ai-card">
-                  <div className="ai-card__heading">
+                  <div className="ai-card__heading ai-card__heading--legacy">
                     <span><Icon name="spark" size={19} /></span>
                     <strong>AI food notes</strong>
                     <small>{scan.loading ? "Reading…" : "Preview"}</small>
@@ -653,7 +716,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
               <div><p className="eyebrow">Your recent meals</p><h2>Little clues add up</h2></div>
               <button className="circle-add" onClick={() => go("record")} aria-label="Record new food"><Icon name="plus" /></button>
             </section>
-            {saveError && <p className="save-error">{saveError}</p>}
+            {saveError && <p className="save-error history-save-error">{saveError}</p>}
             <div className="timeline">
               {meals.map((m, i) => (
                 <article className="log-entry" key={m.id}>
@@ -663,11 +726,39 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                       ? <img src={mealImages[m.id]} alt="" />
                       : <div className={`food-thumb food-thumb--${i % 2}`}><Icon name={m.flags.some(f => allergens.includes(f)) ? "alert" : i % 2 ? "spark" : "check"} /></div>}
                     <div className="log-card__copy">
-                      <strong>{m.name}</strong>
-                      <p>{m.details}</p>
-                      <small><Icon name="clock" size={14} /> {timeAgo(m.createdAt)}{m.flags.length > 0 && ` · ${m.flags.slice(0, 3).join(", ")}`}</small>
+                      {editingMeal?.id === m.id ? (
+                        <div className="log-card__edit-fields">
+                          <input value={editingMeal.name} onChange={e => setEditingMeal({ ...editingMeal, name: e.target.value })} aria-label="Meal name" />
+                          <textarea value={editingMeal.details} onChange={e => setEditingMeal({ ...editingMeal, details: e.target.value })} aria-label="Meal details" />
+                        </div>
+                      ) : (
+                        <>
+                          <strong>{m.name}</strong>
+                          <p>{m.details}</p>
+                          <small><Icon name="clock" size={14} /> {timeAgo(m.createdAt)}{m.flags.length > 0 && ` · ${m.flags.slice(0, 3).join(", ")}`}</small>
+                          {m.ingredients.some(x => x.flagged) && (
+                            <span className="log-card__flagged"><Icon name="flag" size={12} strokeWidth={2.2} /> {m.ingredients.filter(x => x.flagged).map(x => x.name).join(", ")}</span>
+                          )}
+                        </>
+                      )}
                     </div>
-                    <button onClick={() => deleteMeal(m.id)} aria-label={`Delete ${m.name}`}><Icon name="trash" size={18} /></button>
+                    <div className="log-card__actions">
+                      {editingMeal?.id === m.id ? (
+                        <>
+                          <button className="log-card__save" aria-label={`Save changes to ${m.name}`} onClick={async () => {
+                            const err = await updateMeal(m.id, { name: editingMeal.name, details: editingMeal.details });
+                            if (err) setSaveError(err); else { setEditingMeal(null); setSaveError(""); }
+                          }}><Icon name="check" size={18} /></button>
+                          <button onClick={() => { setEditingMeal(null); setSaveError(""); }} aria-label="Cancel editing"><Icon name="close" size={18} /></button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => setIngredientMealId(m.id)} aria-label={`View ingredients for ${m.name}`}><Icon name="info" size={18} /></button>
+                          <button onClick={() => { setEditingMeal({ id: m.id, name: m.name, details: m.details }); setSaveError(""); }} aria-label={`Edit ${m.name}`}><Icon name="pen" size={18} /></button>
+                          <button onClick={() => deleteMeal(m.id)} aria-label={`Delete ${m.name}`}><Icon name="trash" size={18} /></button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </article>
               ))}
@@ -687,7 +778,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
               <p>Tell Gee what you’re allergic to so meals and labels get checked for you. Possible patterns from your logs appear below.</p>
             </section>
 
-            <section className="profile-card" aria-label="My allergens">
+            <section className="allergy-card" aria-label="My allergens">
               <strong>My allergens</strong>
               <div className="allergen-chips">
                 {allergens.length === 0 && <small>None added yet</small>}
@@ -696,30 +787,29 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
                 ))}
               </div>
               <form className="inline-add" onSubmit={e => { e.preventDefault(); addAllergen(); }}>
-                <input value={newAllergen} onChange={e => setNewAllergen(e.target.value)} placeholder="Add an allergen, e.g. peanuts" aria-label="Add an allergen" />
+                <input value={newAllergen} onChange={e => setNewAllergen(e.target.value)} placeholder="Add an allergen" aria-label="Add an allergen" />
                 <button type="submit" disabled={!newAllergen.trim()} aria-label="Add allergen"><Icon name="plus" size={18} strokeWidth={2.2} /></button>
               </form>
 
-              <strong className="profile-card__sub">Emergency contact</strong>
-              <form onSubmit={e => { e.preventDefault(); saveProfile(); }}>
-                <div className="reaction-field-grid">
-                  <label className="reaction-field"><span>Name</span>
-                    <input value={contact.name} onChange={e => { setContact({ ...contact, name: e.target.value }); setProfileState("idle"); }} placeholder="Mom" />
-                  </label>
-                  <label className="reaction-field"><span>Phone</span>
-                    <input type="tel" value={contact.phone} onChange={e => { setContact({ ...contact, phone: e.target.value }); setProfileState("idle"); }} placeholder="555-123-4567" />
-                  </label>
-                </div>
-                <div className="profile-card__actions">
-                  <button type="submit" className="secondary-button" disabled={profileState === "saving"}>
-                    {profileState === "saving" ? "Saving…" : "Save contact"}
-                  </button>
-                  <span role="status" className={profileState === "error" ? "is-error" : ""}>
-                    {profileState === "saved" ? "✓ Saved" : profileState === "error" ? profileMsg : ""}
-                  </span>
-                </div>
-              </form>
             </section>
+
+            {flaggedIngredients.length > 0 && (
+              <section className="flagged-card" aria-label="Flagged ingredients">
+                <div className="flagged-card__head"><Icon name="flag" size={17} strokeWidth={2} /><strong>Ingredients you flagged</strong></div>
+                <ul>
+                  {flaggedIngredients.map(f => (
+                    <li key={f.name}>
+                      <span>{f.name}</span>
+                      <small>in {f.meals} meal{f.meals > 1 ? "s" : ""}</small>
+                      {!allergens.some(a => allergenMatches(a, f.name)) && (
+                        <button onClick={() => { const next = [...new Set([...allergens, f.name.toLowerCase()])]; setAllergens(next); saveProfile(next); }}>Add to my allergens</button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p>Flag ingredients from Meal history (tap ⓘ on a meal). These are your suspicions, not a diagnosis.</p>
+              </section>
+            )}
 
             <div className="allergen-list">
               {patterns.length === 0 ? (
@@ -736,7 +826,7 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
             </div>
             <div className="privacy-note allergen-note">
               <Icon name="shield" size={19} />
-              <span>AllerGeez helps you notice patterns, but it cannot diagnose an allergy. Always confirm concerns with a qualified healthcare professional.</span>
+              <span>allergeez helps you notice patterns, but it cannot diagnose an allergy. Always confirm concerns with a qualified healthcare professional.</span>
             </div>
             <button className="primary-button" onClick={() => go("record")}>Record a meal <Icon name="arrow" size={20} /></button>
           </div>
@@ -921,11 +1011,12 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
             {reactions.length > 0 ? (
               <div className="reaction-history-list">
                 {reactions.map(r => {
-                  const flags = meals.find(m => m.name === r.food)?.flags ?? [];
+                  const linked = meals.find(m => m.name === r.food);
+                  const flags = [...new Set([...(linked?.ingredients.filter(i => i.flagged).map(i => `${i.name} (flagged)`) ?? []), ...(linked?.flags ?? [])])];
                   return (
                     <article className="reaction-log-card" key={r.id}>
                       <div className="reaction-log-card__top">
-                        {reactionImages[r.id] ? <img src={reactionImages[r.id]} alt="" /> : <span className="reaction-summary-card__icon"><Icon name="spark" size={22} /></span>}
+                        {reactionImages[r.id] ? <img src={reactionImages[r.id]} alt="" /> : <span className="reaction-summary-card__icon"><Icon name="medical" size={22} /></span>}
                         <div>
                           <small><Icon name="clock" size={13} />{new Date(r.occurredAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small>
                           <strong>{r.symptoms}</strong>
@@ -960,6 +1051,132 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
           </div>
         )}
 
+        {screen === "profile" && (
+          <ProfileScreen user={user} contact={contact} onSaveContact={saveContact} onBack={() => go("home")} />
+        )}
+
+        {screen === "test-food" && (
+          <div className="screen">
+            <AppHeader title="Test a food" onBack={() => { resetTest(); go("home"); }} onEmergency={openEmergency} />
+            <section className="page-intro page-intro--compact">
+              <p className="eyebrow">Before you eat</p>
+              <h2>Is this safe for me?</h2>
+              <p>Snap a package or meal, or search a brand. Gee checks it against your allergens. Nothing is saved unless you choose to.</p>
+            </section>
+
+            {allergens.length === 0 && (
+              <div className="test-note">
+                <Icon name="shield" size={18} />
+                <p>Add your allergens first so Gee can give you a personal answer.</p>
+                <button onClick={() => go("allergens")}>Add allergens</button>
+              </div>
+            )}
+
+            {!testHasResult ? (
+              <>
+                <div className="record-options">
+                  <button onClick={() => setCameraFor("test")}>
+                    <span className="option-icon option-icon--peach"><Icon name="camera" size={27} /></span>
+                    <span><strong>Take a photo</strong><small>A package, label, menu, or plate</small></span>
+                    <Icon name="chevron" size={20} />
+                  </button>
+                  <button onClick={() => testInput.current?.click()}>
+                    <span className="option-icon option-icon--rose"><Icon name="image" size={27} /></span>
+                    <span><strong>Choose a photo</strong><small>Pick one from your library</small></span>
+                    <Icon name="chevron" size={20} />
+                  </button>
+                </div>
+                <input ref={testInput} hidden type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleMealFile(f, "test-food"); }} />
+                <section className="food-lookup" aria-label="Search a packaged food">
+                  <div className="food-lookup__head"><strong>Or search a brand</strong><small>Find the product to see its allergens and nutrition.</small></div>
+                  <form className="inline-add" onSubmit={e => { e.preventDefault(); lookUpFood(); }}>
+                    <input value={foodQuery} onChange={e => setFoodQuery(e.target.value)} placeholder="Brand or product name" aria-label="Brand or product name" />
+                    <button type="submit" disabled={foodQuery.trim().length < 2 || foodSearch.loading} aria-label="Search"><Icon name="search" size={18} strokeWidth={2.2} /></button>
+                  </form>
+                  {foodSearch.loading && <p className="food-lookup__status">Searching the food database…</p>}
+                  {foodSearch.error && <p className="save-error">{foodSearch.error}</p>}
+                  {foodSearch.products && foodSearch.products.length === 0 && <p className="food-lookup__status">No products found for “{foodSearch.query}”.</p>}
+                  {foodSearch.products && foodSearch.products.length > 0 && (
+                    <ul className="food-results">
+                      {foodSearch.products.map(f => (
+                        <li key={foodKey(f)}>
+                          <button className="food-results__row" onClick={() => testProduct(f)}>
+                            {f.image ? <img src={f.image} alt="" /> : <span className="food-results__thumb"><Icon name="image" size={18} /></span>}
+                            <span className="food-results__copy"><strong>{f.name}</strong><small>{f.brand}</small></span>
+                            <Icon name="chevron" size={18} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </>
+            ) : (
+              <>
+                {(() => {
+                  const busy = scan.loading || photoMatch?.loading;
+                  const verdict = busy ? "checking" : mealFlags.mine.length ? "danger" : !allergens.length ? "unknown" : scan.error ? "unknown" : "ok";
+                  return (
+                    <div className={`verdict verdict--${verdict}`} role="status">
+                      <span className="verdict__icon"><Icon name={verdict === "danger" ? "alert" : verdict === "ok" ? "check" : verdict === "checking" ? "search" : "info"} size={26} strokeWidth={2.2} /></span>
+                      <div>
+                        <strong>{verdict === "checking" ? "Gee is checking…" : verdict === "danger" ? "Not safe for you" : verdict === "ok" ? "No match with your allergens" : "No personal check yet"}</strong>
+                        <p>{verdict === "danger" ? `May contain ${mealFlags.mine.join(", ")}, which ${mealFlags.mine.length > 1 ? "are" : "is"} on your allergen list.`
+                          : verdict === "ok" ? "Gee didn’t find any of your allergens. Still read the label: recipes change and cross-contact happens."
+                          : verdict === "checking" ? "Reading the ingredients and looking up the product."
+                          : scan.error ? "Gee couldn’t finish the check. Try again below." : "Add your allergens to get a safe / not safe answer."}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {photo && <img className="meal-preview" src={photo} alt="The food you’re testing" />}
+                {photoMatch && !photoMatch.loading && (
+                  <div className={`photo-match ${!photoMatch.exact ? "is-miss" : ""}`}>
+                    <Icon name={photoMatch.exact ? "check" : "alert"} size={18} />
+                    <p>{photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</> : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database.</>}</p>
+                  </div>
+                )}
+                {selectedFoods.map(f => (
+                  <div className="food-review-card" key={foodKey(f)}>
+                    <div className="food-review-card__top">
+                      {f.image ? <img src={f.image} alt="" /> : <span className="food-results__thumb"><Icon name="image" size={18} /></span>}
+                      <div><strong>{f.name}</strong><small>{f.brand}</small></div>
+                    </div>
+                    <NutritionFacts food={f} allergens={allergens} />
+                  </div>
+                ))}
+                {(scan.result?.kind === "homemade" || scan.result?.kind === "restaurant") && scan.result.nutrition_estimate && (
+                  <EstimateCard est={scan.result.nutrition_estimate} title={scan.result.name || "This dish"} />
+                )}
+                {(scan.result || scan.error) && (
+                  <div className="ai-card">
+                    <div className="ai-card__heading ai-card__heading--legacy"><span><Icon name="spark" size={19} /></span><strong>What Gee found</strong><small>AI check</small></div>
+                    {!!scan.result?.ingredients?.length && <p className="test-ingredients">{scan.result.ingredients.slice(0, 18).join(", ")}</p>}
+                    <div className="possible-tags">
+                      {mealFlags.mine.map(a => <span key={a} className="tag-alert">Your allergen: {a}</span>)}
+                      {mealFlags.common.map(a => <span key={a}>Possible: {a}</span>)}
+                      {scan.result && !mealFlags.mine.length && !mealFlags.common.length && <span>No common allergens spotted</span>}
+                    </div>
+                    {scan.result?.note && <p className="ai-card__note">{scan.result.note}</p>}
+                    {scan.error && <p className="save-error">{scan.error} <button className="inline-link" onClick={() => runScan(lastScanInput.current)}>Try again</button></p>}
+                  </div>
+                )}
+                <p className="disclaimer">These are clues, not a diagnosis. When in doubt, don’t eat it, and ask a healthcare professional.</p>
+                {saveError && <p className="save-error">{saveError}</p>}
+                {saved ? (
+                  <p className="profile-success-hint"><Icon name="check" size={16} /> Saved to your food history</p>
+                ) : (
+                  <button className="secondary-button" onClick={saveMeal} disabled={scan.loading || !(scan.result || selectedFoods.length)}>
+                    <Icon name="plus" size={18} /> I ate this, save to food history
+                  </button>
+                )}
+                <button className="primary-button" style={{ marginTop: 10 }} onClick={resetTest}>Test another food</button>
+              </>
+            )}
+          </div>
+        )}
+
         {screen === "emergency-guide" && (
           <Emergency contact={contact} trigger={lastTrigger} onExit={() => go("home")} />
         )}
@@ -968,9 +1185,18 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
           <CameraCapture onCapture={handleMealFile} onClose={() => setCameraFor(null)}
             onFallback={() => { setCameraFor(null); cameraInput.current?.click(); }} />
         )}
+        {cameraFor === "test" && (
+          <CameraCapture hint="Snap the package, label, or plate" onCapture={f => handleMealFile(f, "test-food")} onClose={() => setCameraFor(null)}
+            onFallback={() => { setCameraFor(null); testInput.current?.click(); }} />
+        )}
         {cameraFor === "reaction" && (
           <CameraCapture hint="Photograph the hives, rash, or swelling" onCapture={loadReactionPhoto} onClose={() => setCameraFor(null)}
             onFallback={() => { setCameraFor(null); reactionInput.current?.click(); }} />
+        )}
+
+        {ingredientMeal && (
+          <IngredientModal meal={ingredientMeal} allergens={allergens} onClose={() => setIngredientMealId(null)}
+            onSave={ingredients => updateMeal(ingredientMeal.id, { ingredients })} />
         )}
 
         {emergencyOpen && (
@@ -982,9 +1208,17 @@ export default function AllerGeezApp({ initialMeals, initialReactions, initialPr
               <h2 id="emergency-title">Are you having trouble breathing?</h2>
               <p>If symptoms are severe or getting worse quickly, use your prescribed epinephrine if available and call emergency services now.</p>
               <a className="call-button" href="tel:911"><Icon name="phone" /> Call 911</a>
+              {contact.phone && (
+                <a className="call-button call-button--contact" href={`tel:${contact.phone.replace(/[^0-9+]/g, "")}`}>
+                  <Icon name="phone" /> Call {contact.name || "emergency contact"} ({contact.phone})
+                </a>
+              )}
               <button className="guide-button" onClick={openGuide}><Icon name="speaker" size={20} /> Talk me through it</button>
+              {!contact.phone && (
+                <button className="text-button" onClick={() => { setEmergencyOpen(false); go("profile"); }}>Add an emergency contact</button>
+              )}
               <button className="secondary-button" onClick={() => setEmergencyOpen(false)}>My symptoms are not severe</button>
-              <small>AllerGeez does not replace emergency or medical care.</small>
+              <small>allergeez does not replace emergency or medical care.</small>
             </section>
           </div>
         )}

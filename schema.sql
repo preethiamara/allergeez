@@ -36,3 +36,6 @@ create table if not exists food_lookups (
   source text not null,
   created_at timestamptz default now()
 );
+
+-- Meal ingredients with user flags: [{"name": "peanuts", "flagged": true}, ...]
+alter table meals add column if not exists ingredients jsonb not null default '[]'::jsonb;
