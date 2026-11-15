@@ -33,6 +33,23 @@ type ScanResult = {
 const TRIGGER_LABEL: Record<string, string> = { histamine: "Histamine", nickel: "Nickel", salicylates: "Salicylates", tyramine: "Tyramine" };
 
 /** Additives and naturally occurring triggers, folded into one small line so the ingredient notes stay clean. */
+/** Shown when the photo (or description) isn't food: nothing can be saved until it's replaced. */
+function NotFoodCard({ note, isPhoto, onRetake, onChoose, onEdit }: { note?: string; isPhoto: boolean; onRetake?: () => void; onChoose?: () => void; onEdit?: () => void }) {
+  return (
+    <div className="not-food" role="alert">
+      <span className="not-food__icon"><Icon name="alert" size={24} /></span>
+      <strong>{isPhoto ? "That doesn’t look like food" : "That doesn’t sound like food"}</strong>
+      <p>{note?.trim() || (isPhoto ? "Gee couldn’t find any food or drink in this photo." : "Gee couldn’t find a food or drink in what you typed.")} {isPhoto ? "Try another photo of the meal, package, or ingredient label." : "Describe what you ate or drank."}</p>
+      <div className="not-food__actions">
+        {isPhoto ? (<>
+          {onRetake && <button className="primary-button" onClick={onRetake}><Icon name="camera" size={18} /> Retake photo</button>}
+          {onChoose && <button className="secondary-button" onClick={onChoose}><Icon name="image" size={18} /> Choose another photo</button>}
+        </>) : onEdit && <button className="primary-button" onClick={onEdit}><Icon name="pen" size={18} /> Edit description</button>}
+      </div>
+    </div>
+  );
+}
+
 /** When the meal was eaten: defaults to now, can be set to any earlier time. */
 function EatenAtField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const local = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
@@ -362,6 +379,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
 
   async function saveMeal() {
     setSaveError("");
+    if (notFood) { setSaveError("That doesn’t look like food, so it can’t be saved. Try another photo."); return; }
     const foodNames = selectedFoods.map(f => f.brand && !f.name.toLowerCase().includes(f.brand.split(",")[0].toLowerCase()) ? `${f.brand.split(",")[0]} ${f.name}` : f.name);
     const details = [desc.trim(), ...foodNames].filter(Boolean).join(", ") || "Food photo";
     const fallback = details.split(/[,.\n]/)[0].trim();
@@ -370,7 +388,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
       const meal: Meal = await jsonFetch("/api/meals", {
         method: "POST",
         body: JSON.stringify({
-          name: mealNameForSave, details,
+          name: mealNameForSave, details, kind: scan.result?.kind,
           flags: [...new Set([...mealFlags.mine, ...mealFlags.common,
             ...(scan.result?.additives ?? []).map(a => a.group), ...(scan.result?.natural_triggers ?? []).map(t => TRIGGER_LABEL[t.trigger] ?? t.trigger)])],
           // Ingredients only: a packaged product contributes its label's ingredients, never its product name
@@ -423,6 +441,8 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     runScan({ text: productText(f) });
   }
   const testHasResult = !!(photo || selectedFoods.length || scan.loading || scan.result || scan.error);
+  // The scan decided this isn't food (a photo of a desk, a pet, a screenshot…): block saving and ask for a new one
+  const notFood = !scan.loading && scan.result?.kind === "not_food" && !selectedFoods.length;
   /** "Type it in" on Test a food: check the description (plus any packaged foods picked) without logging it. */
   function testDescription() {
     setPhoto(undefined); setPhotoMatch(null); setSaved(false); setSaveError("");
@@ -823,8 +843,6 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <Icon name="chevron" size={20} />
               </button>
             </div>
-            <input ref={libraryInput} hidden type="file" accept="image/*" onChange={onMealPhoto} />
-            <input ref={cameraInput} hidden type="file" accept="image/*" capture="environment" onChange={onMealPhoto} />
             <button className="history-link" onClick={() => go("history")}>
               <span><Icon name="history" size={20} /> View food history</span>
               <Icon name="arrow" size={20} />
@@ -934,6 +952,10 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                   <p>You can make changes before adding this to your food history.</p>
                 </section>
                 {photo && <img className="meal-preview" src={photo} alt="The meal you selected" />}
+                {notFood ? (
+                  <NotFoodCard note={scan.result?.note} isPhoto={!!photo}
+                    onRetake={() => setCameraFor("meal")} onChoose={() => libraryInput.current?.click()} onEdit={() => go("describe")} />
+                ) : (<>
                 {photoMatch && (
                   <div className={`photo-match ${!photoMatch.loading && !photoMatch.exact ? "is-miss" : ""}`} aria-live="polite">
                     <Icon name={photoMatch.loading ? "search" : photoMatch.exact ? "check" : "alert"} size={18} />
@@ -1016,6 +1038,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <button className="primary-button" onClick={saveMeal} disabled={scan.loading && !desc.trim()}>
                   <Icon name="check" size={20} /> Save to food history
                 </button>
+                </>)}
               </>
             )}
           </div>
@@ -1499,7 +1522,6 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <Icon name="chevron" size={20} />
               </button>
             </div>
-            <input ref={testInput} hidden type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleMealFile(f, "test-food"); }} />
             <button className="history-link" onClick={() => setWatchlistOpen(true)}>
               <span><Icon name="shield" size={20} /> View potential allergens</span>
               <Icon name="arrow" size={20} />
@@ -1579,7 +1601,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                     <p className="allergens-modal-desc">{photoMatch?.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database and on the web…</> : "Reading the ingredients."}</p>
                     {photo && <img src={photo} alt="The food you’re testing" className="safety-result-preview-image" />}
                   </div>
-                ) : (<>
+                ) : notFood ? (<>
+                  {photo && <img src={photo} alt="Your photo" className="safety-result-preview-image" />}
+                  <NotFoodCard note={scan.result?.note} isPhoto={!!photo}
+                    onRetake={() => { resetTest(); setCameraFor("test"); }} onChoose={() => testInput.current?.click()}
+                    onEdit={() => { setScan({ loading: false }); go("test-describe"); }} />
+                </>) : (<>
                   <SafetyHeart percentage={pct} status={status} />
                   <div className="safety-popup-header">
                     <span className={`safety-badge safety-badge--${status}`}>{status === "safe" ? "Safe to eat" : status === "caution" ? "Use caution" : "Allergen warning"}</span>
@@ -1649,6 +1676,11 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
         {screen === "emergency-guide" && (
           <Emergency contact={contact} trigger={lastTrigger} onExit={() => go("home")} />
         )}
+
+        {/* Photo pickers live here (not inside a screen) so "Choose another photo" works from any screen */}
+        <input ref={libraryInput} hidden type="file" accept="image/*" onChange={onMealPhoto} />
+        <input ref={cameraInput} hidden type="file" accept="image/*" capture="environment" onChange={onMealPhoto} />
+        <input ref={testInput} hidden type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleMealFile(f, "test-food"); }} />
 
         {cameraFor === "meal" && (
           <CameraCapture onCapture={handleMealFile} onClose={() => setCameraFor(null)}
