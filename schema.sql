@@ -47,3 +47,8 @@ alter table reactions add column if not exists symptom_tags text[] not null defa
 -- Gee check-ins: each conversation is a Mastra memory thread (Mastra creates its own mastra_* tables in this database).
 -- A saved reaction remembers which conversation it came from.
 alter table reactions add column if not exists gee_thread_id text;
+
+-- Find food nearby: taste profile, and cached places / menus (OpenStreetMap + Bright Data)
+alter table profiles add column if not exists taste_likes text[] not null default '{}';
+alter table profiles add column if not exists diet text not null default '';
+create table if not exists place_cache (key text primary key, data jsonb not null, created_at timestamptz default now());

@@ -7,6 +7,8 @@ import ProfileScreen from "./ProfileScreen";
 import IngredientModal from "./IngredientModal";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
 import CameraCapture from "./CameraCapture";
+import { FoodRadarMap, RestaurantScanner } from "./FoodRadar";
+import { prepareImage } from "./image";
 import { useGeeRecorder } from "./useGeeRecorder";
 import type { FoodProduct, Nutrients } from "@/lib/nutrition";
 import { allergenMatches, allergyGroup } from "@/lib/allergens";
@@ -18,7 +20,7 @@ import { matchesUserList, type Additive, type NaturalTrigger, detectAdditives, d
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
   | "gee-voice" | "reaction-form" | "reaction-review" | "reaction-history" | "emergency-guide"
-  | "profile" | "test-food" | "test-describe";
+  | "profile" | "test-food" | "test-describe" | "test-nearby" | "test-restaurant";
 
 type NutritionEstimate = { portion?: string; kcal?: number; protein?: number; carbs?: number; fat?: number; sugars?: number; fiber?: number; sodiumMg?: number };
 type ScanResult = {
@@ -145,21 +147,6 @@ const dayLabel = (iso: string, prev?: string) => {
 };
 
 // Phone photos are often 4-12 MB; shrink to a JPEG Gemini reads quickly.
-async function prepareImage(file: File): Promise<{ data: string; mimeType: string }> {
-  const toB64 = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res((r.result as string).split(",")[1]); r.onerror = rej; r.readAsDataURL(b); });
-  try {
-    const bmp = await createImageBitmap(file);
-    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
-    const c = document.createElement("canvas");
-    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-    c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
-    const blob: Blob = await new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error("encode failed"))), "image/jpeg", 0.85));
-    return { data: await toB64(blob), mimeType: "image/jpeg" };
-  } catch {
-    return { data: await toB64(file), mimeType: file.type || "image/jpeg" };
-  }
-}
-
 const NUTRIENT_ROWS: [keyof Nutrients, string, string][] = [
   ["kcal", "Calories", ""], ["fat", "Fat", "g"], ["satFat", "Saturated fat", "g"], ["carbs", "Carbohydrates", "g"],
   ["sugars", "Sugars", "g"], ["fiber", "Fiber", "g"], ["protein", "Protein", "g"], ["sodiumMg", "Sodium", "mg"],
@@ -464,6 +451,14 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
     go("test-food");
     runScan({ text });
   }
+
+  /** "Log this meal" from a restaurant menu: open Record meal with the dish filled in. */
+  const logDishFromMenu = (d: { dish: string; description?: string; from: string }) => {
+    resetTest();
+    setDesc([`${d.dish} from ${d.from}`, d.description].filter(Boolean).join(": "));
+    setSelectedFoods([]); setPhoto(undefined); setScan({ loading: false }); setSaved(false);
+    go("describe");
+  };
 
   // ---------- reactions ----------
   const startReaction = () => {
@@ -816,7 +811,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               </button>
               <button className="action-card action-card--test-food" onClick={() => { resetTest(); go("test-food"); }}>
                 <span className="action-card__icon action-card__icon--peach"><Icon name="flask" size={25} /></span>
-                <span><strong>Test a food!</strong><small>Check ingredients &amp; allergy risk</small></span>
+                <span><strong>Food Checker</strong><small>Check ingredients &amp; find food</small></span>
                 <Icon name="arrow" />
               </button>
             </section>
@@ -1471,7 +1466,11 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                         {r.severity > 0 && <b className={sevClass(r.severity)}>{r.severity}/10</b>}
                       </div>
                       <details>
-                        <summary>View details</summary>
+                        <summary>
+                          <span>View details</span>
+                          {/* On the "View details" line, so it stays put when the details open */}
+                          <button className="reaction-delete" onClick={e => { e.preventDefault(); e.stopPropagation(); deleteReaction(r.id); }} aria-label="Delete reaction entry"><Icon name="trash" size={17} /></button>
+                        </summary>
                         <dl>
                           <div><dt>What you said</dt><dd>{r.symptoms}</dd></div>
                           <div><dt>Duration</dt><dd>{r.duration}</dd></div>
@@ -1498,7 +1497,6 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                           );
                         })()}
                       </details>
-                      <button className="reaction-delete" onClick={() => deleteReaction(r.id)} aria-label="Delete reaction entry"><Icon name="trash" size={17} /></button>
                     </article>
                   );
                 })}
@@ -1523,12 +1521,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
         )}
 
         {screen === "test-food" && (
-          <div className="screen">
-            <AppHeader title="Test a food" onBack={() => { resetTest(); go("home"); }} onEmergency={openEmergency} />
+          <div className="screen food-radar-menu-screen">
+            <AppHeader title="Food-O-Radar!" onBack={() => { resetTest(); go("home"); }} onEmergency={openEmergency} />
             <section className="page-intro">
-              <p className="eyebrow">Food safety</p>
-              <h2>What do you want to eat?</h2>
-              <p>Check ingredients and spot potential allergen triggers before you take a bite.</p>
+              <p className="eyebrow">Food Scan Time</p>
+              <h2>Food-O-Radar!</h2>
+              <p>Explore allergy-safe restaurants nearby, scan an online or physical menu, or analyze a dish.</p>
             </section>
             {allergens.length === 0 && (
               <div className="test-note">
@@ -1537,25 +1535,20 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <button onClick={() => go("allergens")}>Add allergens</button>
               </div>
             )}
-            <div className="record-options">
-              <button onClick={() => testInput.current?.click()}>
-                <span className="option-icon option-icon--rose"><Icon name="image" size={27} /></span>
-                <span><strong>Choose a photo</strong><small>Pick one from your library</small></span>
+            <div className="record-options food-radar-options">
+              <button onClick={() => go("test-nearby")}>
+                <span className="option-icon option-icon--rose"><Icon name="radar" size={27} /></span>
+                <span><strong>Find food near me!</strong><small>Explore safe spots on the radar map</small></span>
                 <Icon name="chevron" size={20} />
               </button>
-              <button onClick={() => setCameraFor("test")}>
-                <span className="option-icon option-icon--peach"><Icon name="camera" size={27} /></span>
-                <span><strong>Take a photo</strong><small>Snap your meal or a label now</small></span>
+              <button onClick={() => go("test-restaurant")}>
+                <span className="option-icon option-icon--peach"><Icon name="restaurant" size={27} /></span>
+                <span><strong>Check a restaurant</strong><small>Enter menu URL or upload menu photo</small></span>
                 <Icon name="chevron" size={20} />
               </button>
               <button onClick={() => { resetTest(); go("test-describe"); }}>
-                <span className="option-icon option-icon--sage"><Icon name="pen" size={27} /></span>
-                <span><strong>Type it in</strong><small>Describe your food in your own words</small></span>
-                <Icon name="chevron" size={20} />
-              </button>
-              <button onClick={() => testInput.current?.click()}>
-                <span className="option-icon option-icon--yellow"><Icon name="menu" size={27} /></span>
-                <span><strong>Upload a menu</strong><small>Upload a menu to see what you can eat</small></span>
+                <span className="option-icon option-icon--sage"><Icon name="food" size={27} /></span>
+                <span><strong>Describe a meal</strong><small>Type ingredients or upload plate image</small></span>
                 <Icon name="chevron" size={20} />
               </button>
             </div>
@@ -1565,6 +1558,9 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             </button>
           </div>
         )}
+
+        {screen === "test-nearby" && <FoodRadarMap onBack={() => go("test-food")} onEmergency={openEmergency} onLog={logDishFromMenu} />}
+        {screen === "test-restaurant" && <RestaurantScanner onBack={() => go("test-food")} onEmergency={openEmergency} onLog={logDishFromMenu} />}
 
         {screen === "test-describe" && (
           <div className="screen">
@@ -1577,7 +1573,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             <div className="text-card">
               <label htmlFor="test-food-description">Describe what’s on your plate</label>
               <textarea id="test-food-description" value={desc} onChange={e => setDesc(e.target.value)} autoFocus
-                placeholder="For example: a chicken wrap with hummus, lettuce, pickles and a creamy sauce…" />
+                placeholder="For example: I had a chicken wrap with hummus, lettuce, pickles and a creamy sauce..." />
+              <div className="describe-upload-row">
+                <button type="button" className="upload-plate-pill" onClick={() => testInput.current?.click()}>
+                  <Icon name="camera" size={18} /><span>Or upload image of meal</span>
+                </button>
+              </div>
               <span className="text-card__hint">{desc.length} characters</span>
             </div>
             <div className="packaged-card">

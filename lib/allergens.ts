@@ -56,7 +56,7 @@ const KNOWN_WORDS = ["dairy", "milk", "eggs", "peanuts", "tree nuts", "almonds",
   "yeast", "carrot", "lactose", "casein", "whey", "nickel", "histamine", "alcohol", "fructose", "aspartame", "carmine", "sulfites",
   "preservatives", "salicylates", "tartrazine"];
 
-function editDistance(a: string, b: string) {
+export function editDistance(a: string, b: string) {
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 1; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
@@ -103,4 +103,20 @@ export function notEatenReason(text: string): string | null {
     return `${label} ${verb}. AllerGeez tracks allergens you eat or drink.`;
   }
   return null;
+}
+
+
+/**
+ * The user's list as foods to screen menus for: spelling fixed ("avacado" → "avocado") and
+ * things that aren't eaten (pollen, dust, pets…) left out.
+ */
+export function foodAllergens(list: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of list) {
+    const t = raw.trim().toLowerCase();
+    if (!t || notEatenReason(t)) continue;
+    const fixed = knownAllergen(t) ? t : allergenTypo(t) ?? t;
+    if (!out.includes(fixed)) out.push(fixed);
+  }
+  return out;
 }
