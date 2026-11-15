@@ -12,6 +12,8 @@ export type FoodProduct = {
   code: string; name: string; brand: string; image?: string; servingSize?: string;
   per100g: Nutrients; perServing?: Nutrients;
   allergens: string[]; traces: string[]; ingredients?: string;
+  /** Set when the label was found on a web page (not in the food database) */
+  sourceUrl?: string; sourceSite?: string;
 };
 export type FoodSearch = { query: string; products: FoodProduct[]; source: "brightdata" | "openfoodfacts" | "cache" };
 
@@ -58,26 +60,34 @@ function toProduct(h: any): FoodProduct | null {
 }
 
 let brightDataRequests = 0;
+export const brightDataEnabled = () => !!(process.env.BRIGHTDATA_API_KEY && process.env.BRIGHTDATA_ZONE);
+
+/** Fetch any page through Bright Data's Web Unlocker. Returns the raw body, or null on failure. */
+export async function brightDataFetch(url: string, timeoutMs = 20_000): Promise<{ ok: boolean; status: number; text: string } | null> {
+  const key = process.env.BRIGHTDATA_API_KEY, zone = process.env.BRIGHTDATA_ZONE;
+  if (!key || !zone) return null;
+  try {
+    const r = await fetch("https://api.brightdata.com/request", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ zone, url, format: "raw" }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    brightDataRequests++;
+    console.log(`[brightdata] request #${brightDataRequests} this server session (HTTP ${r.status}) ${new URL(url).hostname}`);
+    return { ok: r.ok, status: r.status, text: await r.text() };
+  } catch (e: any) {
+    console.warn("[brightdata] error:", e?.message);
+    return null;
+  }
+}
 
 async function fetchJson(url: string): Promise<{ body: any; source: FoodSearch["source"] }> {
-  const key = process.env.BRIGHTDATA_API_KEY, zone = process.env.BRIGHTDATA_ZONE;
-  if (key && zone) {
-    try {
-      const r = await fetch("https://api.brightdata.com/request", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ zone, url, format: "raw" }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      brightDataRequests++;
-      console.log(`[nutrition] Bright Data request #${brightDataRequests} this server session (HTTP ${r.status})`);
-      const text = await r.text();
-      // Bright Data reports some failures as HTTP 200 with a plain-text message instead of the page
-      if (r.ok && /^\s*[{[]/.test(text)) return { body: JSON.parse(text), source: "brightdata" };
-      console.warn(`[nutrition] Bright Data ${r.ok ? "couldn't fetch the page" : `failed (HTTP ${r.status})`}, falling back to Open Food Facts:`, text.slice(0, 160));
-    } catch (e: any) {
-      console.warn("[nutrition] Bright Data error, falling back to Open Food Facts:", e?.message);
-    }
+  const bd = await brightDataFetch(url);
+  if (bd) {
+    // Bright Data reports some failures as HTTP 200 with a plain-text message instead of the page
+    if (bd.ok && /^\s*[{[]/.test(bd.text)) return { body: JSON.parse(bd.text), source: "brightdata" };
+    console.warn(`[nutrition] Bright Data ${bd.ok ? "couldn't fetch the page" : `failed (HTTP ${bd.status})`}, falling back to Open Food Facts:`, bd.text.slice(0, 160));
   }
   const r = await fetch(url, { headers: { "User-Agent": "AllerGeez/0.1 (allergy safety hackathon app)" }, signal: AbortSignal.timeout(15_000) });
   if (!r.ok) throw new Error(`Food database returned ${r.status}`);
@@ -85,7 +95,7 @@ async function fetchJson(url: string): Promise<{ body: any; source: FoodSearch["
 }
 
 let tableReady: Promise<unknown> | null = null;
-const ensureTable = () => (tableReady ??= sql`create table if not exists food_lookups (
+export const ensureTable = () => (tableReady ??= sql`create table if not exists food_lookups (
   query text primary key, results jsonb not null, source text not null, created_at timestamptz default now())`);
 
 export async function searchFoods(raw: string): Promise<FoodSearch> {
@@ -130,6 +140,8 @@ export async function lookupBarcode(raw: string): Promise<FoodSearch> {
 export type ProductMatch = FoodSearch & {
   /** true when products are the same brand as the photo; false means `products` are only similar suggestions */
   exact: boolean;
+  /** Set when the match came from a web search (the product isn't in the food database) */
+  web?: { url: string; site: string };
 };
 
 const norm = (t: string) => t.toLowerCase().normalize("NFKD").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -173,6 +185,17 @@ export async function identifyProduct(opts: { barcode?: string; brand?: string; 
     const matches = brand ? found.products.filter(p => sameBrand(brand, p)) : found.products.filter(p => nameScore(name, p) >= 0.5);
     if (matches.length) return { ...found, products: rank(matches), exact: true };
     suggestions ??= found;
+  }
+  // Not in the food database: search the web for the label (brand site / retailers) via Bright Data
+  if (brand && nameOnly) {
+    try {
+      const { findProductOnWeb } = await import("./webproduct");
+      const web = await findProductOnWeb(brand, name);
+      if (web?.sourceUrl) {
+        return { query: target, source: "brightdata", exact: true, web: { url: web.sourceUrl, site: web.sourceSite ?? "" },
+          products: [web, ...rank(suggestions?.products ?? []).slice(0, 3)] };
+      }
+    } catch (e: any) { console.warn("[nutrition] web lookup failed:", e?.message); }
   }
   // Nothing from the same brand: return similar items as suggestions only (never auto-selected)
   return { ...(suggestions ?? { query: target, source: "cache" as const, products: [] }), products: rank(suggestions?.products ?? []), exact: false };

@@ -12,7 +12,7 @@ import type { FoodProduct, Nutrients } from "@/lib/nutrition";
 import { allergenMatches, allergyGroup } from "@/lib/allergens";
 import { attackTag, detectSymptoms, isSerious, parseFood, parseIntensity, parseTiming } from "@/lib/symptoms";
 import { findLikelyIrritants } from "@/lib/irritants";
-import { matchesUserList, type Additive, type NaturalTrigger } from "@/lib/additives";
+import { matchesUserList, type Additive, type NaturalTrigger, detectAdditives, detectNaturalTriggers } from "@/lib/additives";
 
 type Screen =
   | "home" | "record" | "describe" | "review" | "history" | "allergens"
@@ -20,6 +20,18 @@ type Screen =
   | "profile" | "test-food";
 
 type NutritionEstimate = { portion?: string; kcal?: number; protein?: number; carbs?: number; fat?: number; sugars?: number; fiber?: number; sodiumMg?: number };
+/** "Oats, chia seeds, sugars (cane sugar, tapioca syrup), natural flavors." → top-level ingredients */
+function splitIngredients(text: string) {
+  const out: string[] = []; let depth = 0, cur = "";
+  for (const ch of text.replace(/^\s*ingredients?\s*:\s*/i, "")) {
+    if (ch === "(" || ch === "[") depth++;
+    if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    if ((ch === "," || ch === ";") && depth === 0) { out.push(cur); cur = ""; } else cur += ch;
+  }
+  out.push(cur);
+  return out.map(x => x.replace(/[.*]+$/g, "").replace(/\*/g, "").trim()).filter(x => x && x.length < 120).slice(0, 40);
+}
+
 type ScanResult = {
   kind?: "packaged" | "label" | "menu" | "homemade" | "restaurant" | "not_food";
   name?: string; ingredients?: string[]; flags?: { ingredient: string; allergen: string; reason: string }[];
@@ -158,6 +170,8 @@ function NutritionFacts({ food, allergens }: { food: FoodProduct; allergens: str
           <div className="nutrition__head"><strong>Nutrition facts</strong><small>{useServing ? `per serving${food.servingSize ? ` (${food.servingSize})` : ""}` : "per 100 g"}</small></div>
           <dl>{rows.map(([k, label, unit]) => <div key={k}><dt>{label}</dt><dd>{n[k]}{unit && ` ${unit}`}</dd></div>)}</dl>
         </>
+      ) : food.sourceUrl && food.ingredients ? (
+        <p className="test-ingredients"><strong>Ingredients</strong> (from {food.sourceSite}): {food.ingredients}</p>
       ) : <p className="nutrition__none">No nutrition facts listed for this product.</p>}
       {(food.allergens.length > 0 || food.traces.length > 0) && (
         <div className="possible-tags">
@@ -206,7 +220,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   const [extraGroups, setExtraGroups] = useState<string[]>([]);
   const [groupDraft, setGroupDraft] = useState<string | null>(null);
   // Product matched from a photo (Gemini reads brand/barcode → Bright Data looks it up)
-  const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string } | null>(null);
+  const [photoMatch, setPhotoMatch] = useState<{ loading: boolean; products?: FoodProduct[]; exact?: boolean; label?: string; error?: string; web?: { url: string; site: string } } | null>(null);
   const [scan, setScan] = useState<{ loading: boolean; result?: ScanResult; error?: string }>({ loading: false });
   const scanSeq = useRef(0);
   const [eatenAt, setEatenAt] = useState(""); // "" = now; otherwise a datetime-local value
@@ -266,7 +280,15 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
       if (scanId !== scanSeq.current) return;
       const products: FoodProduct[] = r.products ?? [];
       const exact = r.exact !== false && products.length > 0;
-      setPhotoMatch({ loading: false, products, exact, label });
+      setPhotoMatch({ loading: false, products, exact, label, web: r.web });
+      // The real label beats the photo's guesses: swap in its ingredients and re-check additives / triggers
+      const real = r.web && products[0]?.ingredients;
+      if (real) setScan(s => {
+        if (!s.result) return s;
+        const ingredients = splitIngredients(real);
+        const additives = [...(s.result.additives ?? []).filter(a => !detectAdditives(ingredients).some(b => b.name === a.name)), ...detectAdditives(ingredients)];
+        return { ...s, result: { ...s.result, ingredients, additives, natural_triggers: detectNaturalTriggers(ingredients) } };
+      });
       // Only auto-pick when it's the same brand; otherwise the user chooses from suggestions
       if (exact) setSelectedFoods([products[0]]);
     } catch (e: any) {
@@ -912,7 +934,8 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                   <div className={`photo-match ${!photoMatch.loading && !photoMatch.exact ? "is-miss" : ""}`} aria-live="polite">
                     <Icon name={photoMatch.loading ? "search" : photoMatch.exact ? "check" : "alert"} size={18} />
                     <p>
-                      {photoMatch.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database…</>
+                      {photoMatch.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database and on the web…</>
+                        : photoMatch.web ? <>Not in the food database, so Gee searched the web and found the label on <a href={photoMatch.web.url} target="_blank" rel="noreferrer">{photoMatch.web.site}</a>. Double-check the package.</>
                         : photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</>
                         : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database, so these notes come from the photo only.{photoMatch.products?.length ? " Tap a similar product below if it’s the same thing." : ""}</>}
                     </p>
@@ -1519,7 +1542,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 {photoMatch && !photoMatch.loading && (
                   <div className={`photo-match ${!photoMatch.exact ? "is-miss" : ""}`}>
                     <Icon name={photoMatch.exact ? "check" : "alert"} size={18} />
-                    <p>{photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</> : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database.</>}</p>
+                    <p>{photoMatch.web ? <>Label found on the web: <a href={photoMatch.web.url} target="_blank" rel="noreferrer">{photoMatch.web.site}</a></> : photoMatch.exact ? <>Matched <strong>{photoMatch.label}</strong> with the food database</> : <>Couldn’t find <strong>{photoMatch.label}</strong> in the food database.</>}</p>
                   </div>
                 )}
                 {selectedFoods.map(f => (
