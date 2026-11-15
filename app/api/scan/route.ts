@@ -46,7 +46,7 @@ First decide what this is, as "kind":
 - "menu": a restaurant menu
 - "homemade": a home-cooked or plated dish, snack, or drink without branded packaging
 - "restaurant": a plated restaurant or takeout dish
-- "not_food": anything else
+- "not_food": anything else, including people, pets, rooms, furniture, screens or screenshots, documents, non-food objects, medicine/pills, cosmetics, or a photo too blurry or dark to tell. A food or drink must actually be visible (or clearly described) to count.
 For "packaged", fill "product" with the brand and product name exactly as printed, and "barcode" with the digits only if a barcode number is clearly readable (else "").
 
 List the likely ingredients (for dishes include typical hidden ingredients like sauces, butter, flour, nuts in pesto; for labels read them exactly).
@@ -66,7 +66,7 @@ Return JSON only:
  "natural_triggers": [{"trigger": string, "foods": string[]}],
  "nutrition_estimate": {"portion": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "sugars": number, "fiber": number, "sodiumMg": number} | null,
  "safe": boolean, "note": string (one friendly sentence)}
-If the input is not food or is unreadable, use kind "not_food", empty lists, safe false, and explain in note.
+If the input is not food or is unreadable, use kind "not_food", name "", empty lists, safe false, and in note say briefly what it is instead (for a photo: "This looks like a laptop keyboard."; for text: "Car keys aren’t food.").
 If unsure, set safe to false. Informational only, not medical advice.${description ? `\n\nUser's description: """${description}"""` : ""}`;
 
     let lastErr: any;
@@ -93,6 +93,11 @@ If unsure, set safe to false. Informational only, not medical advice.${descripti
           return detectNaturalTriggers([ing]).some(t => t.trigger === trig)
             || geminiTriggerFoods.some(t => String(t.trigger).toLowerCase() === trig && (t.foods ?? []).some(fd => ingL.includes(String(fd).toLowerCase()) || String(fd).toLowerCase().includes(ingL)));
         });
+        // Not food: nothing to analyze or save; the app asks for another photo
+        if (result.kind === "not_food") {
+          return Response.json({ ...result, name: "", product: null, barcode: "", ingredients: [], flags: [], common_allergens: [],
+            nutrition_estimate: null, additives: [], natural_triggers: [], safe: false });
+        }
         // Double-check Gemini with the built-in additive / trigger lists, and merge
         const texts = [...(Array.isArray(result.ingredients) ? result.ingredients : []), result.name, description].filter(Boolean).map(String);
         const additives = new Map<string, { name: string; group: string; e?: string }>();

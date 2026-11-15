@@ -18,6 +18,7 @@ export async function POST(req: Request) {
   try {
     const { userId } = await getActor();
     const body = await req.json().catch(() => null);
+    if (body?.kind === "not_food") return Response.json({ error: "That doesn’t look like food, so it can’t be saved. Try another photo." }, { status: 422 });
     const details = String(body?.details ?? "").trim().slice(0, 4000);
     const name = String(body?.name ?? "").trim().slice(0, 80) || "New meal";
     // Ingredients only (no product or dish names), so irritant detection compares real ingredients

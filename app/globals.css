@@ -776,3 +776,10 @@ h1{font-size:27px}
 .allergen-item-left>div{min-width:0}
 .allergen-item-bullet{flex-shrink:0}
 .allergen-item-left strong{text-transform:capitalize}
+/* Not food: ask for a new photo */
+.not-food{text-align:center;background:#fff8ec;border:1px solid #ffe0b2;border-radius:22px;margin:14px 0;padding:20px 18px}
+.not-food__icon{color:#c26a00;background:#fff;border-radius:50%;place-items:center;width:48px;height:48px;margin:0 auto 10px;display:grid}
+.not-food strong{color:var(--ink);font:800 17px Nunito,sans-serif;display:block}
+.not-food p{color:#7b6168;margin:6px 0 14px;font-size:13px;line-height:1.5}
+.not-food__actions{gap:8px;display:grid}
+.not-food__actions button{justify-content:center;align-items:center;gap:8px;display:flex}
