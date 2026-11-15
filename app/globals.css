@@ -788,3 +788,31 @@ h1{font-size:27px}
 .gee-transcript summary{cursor:pointer;color:#b65070;align-items:center;gap:8px;font:800 13px Nunito,sans-serif;display:flex}
 .gee-transcript summary .buddy{width:24px;height:24px}
 .gee-transcript .gee-chat{max-height:none;margin-top:10px}
+
+/* ---------- Nov 15 design update 2: hand-drawn icons, SOS bell, 5-tab nav, menu option ---------- */
+.sketchy-icon{stroke-linecap:round;stroke-linejoin:round;filter:url(#allergeez-sketch-filter);transform:translateZ(0)}
+.emergency-button__icon{background:0 0;border-radius:50%;place-items:center;width:clamp(42px,5.6svh,50px);height:clamp(42px,5.6svh,50px);display:grid;overflow:hidden}
+.bottom-nav{grid-template-columns:repeat(5,1fr);padding:7px 6px}
+.bottom-nav button{padding:6px 2px}
+.sos-mini{cursor:pointer;background:0 0;border:none;border-radius:50%;padding:0;transition:transform .15s,box-shadow .15s;overflow:hidden;box-shadow:0 4px 12px #d94f4f47}
+.sos-mini:hover{transform:scale(1.06);box-shadow:0 6px 16px #d94f4f61}
+.sos-mini .sos-icon-img{width:100%;height:100%}
+.empty-state{text-align:center;padding:42px 20px 36px}
+.empty-state .buddy{width:156px;height:156px;margin:0 auto 10px;display:block}
+.emergency-modal__icon{background:0 0;border-radius:50%;place-items:center;width:66px;height:66px;margin:3px auto 16px;display:grid;overflow:hidden}
+.profile-card__icon--alert{background:0 0;border-radius:50%;flex-shrink:0;place-items:center;width:34px;height:34px;display:grid;overflow:hidden}
+.option-icon--yellow{color:#9a7628;background:#fff3bd}
+.text-center{text-align:center}
+.guide-screen a.sos-mini{color:#fff;background:var(--red);width:39px;height:39px;place-items:center;display:grid}
+
+/* Test a food: menu check */
+.menu-check{text-align:left;gap:12px;margin:8px 0 14px;display:grid}
+.menu-check__group{border-radius:16px;padding:10px 12px}
+.menu-check__group--ok{background:#f1f8f3;border:1px solid #d4edda}
+.menu-check__group--ask{background:#fff8ec;border:1px solid #ffe0b2}
+.menu-check__group--avoid{background:#fdf2f2;border:1px solid #f8d7da}
+.menu-check__dish{border-top:1px solid #0000000d;padding:6px 0}
+.menu-check__dish:first-of-type{border-top:0}
+.menu-check__dish strong{color:var(--ink);font:800 13px Nunito,sans-serif;display:block}
+.menu-check__dish small{color:var(--muted);font-size:11px}
+.menu-check__group--avoid small{color:#9c2738;font-weight:700}

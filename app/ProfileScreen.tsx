@@ -81,16 +81,16 @@ export default function ProfileScreen({ user, contact, onSaveContact, onBack }: 
   const contactCard = (
     <section className="profile-card emergency-contact-card">
       <div className="profile-card__heading">
-        <span className="profile-card__icon profile-card__icon--alert"><Icon name="alert" size={18} /></span>
+        <span className="profile-card__icon profile-card__icon--alert"><Icon name="sos" size={34} /></span>
         <div><strong>emergency contact:</strong><small>Quickly reach for severe allergy reactions</small></div>
       </div>
       <div className="profile-field">
         <label htmlFor="emergency-contact-name">name:</label>
-        <input id="emergency-contact-name" type="text" value={c.name} onChange={e => setC({ ...c, name: e.target.value })} placeholder="Contact name" />
+        <input id="emergency-contact-name" type="text" value={c.name} onChange={e => setC({ ...c, name: e.target.value })} placeholder="e.g. Sarah Doe" />
       </div>
       <div className="profile-field">
         <label htmlFor="emergency-contact-number">number:</label>
-        <input id="emergency-contact-number" type="tel" value={c.phone} onChange={e => setC({ ...c, phone: e.target.value })} placeholder="Phone number" />
+        <input id="emergency-contact-number" type="tel" value={c.phone} onChange={e => setC({ ...c, phone: e.target.value })} placeholder="e.g. (555) 234-5678" />
       </div>
       {contactState === "saved" && <p className="profile-success-hint"><Icon name="check" size={16} /> Emergency contact saved!</p>}
       {contactState === "error" && <p className="save-error">{contactError}</p>}
