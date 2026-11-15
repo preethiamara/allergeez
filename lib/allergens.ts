@@ -9,7 +9,9 @@ const stem = (s: string) => s.toLowerCase().trim().replace(/s$/, "");
 export function allergenMatches(profileItem: string, productAllergen: string) {
   const a = stem(profileItem), b = stem(productAllergen);
   if (!a || !b) return false;
-  if (a === b || a.includes(b) || b.includes(a)) return true;
+  // Whole-word containment only: "peanut butter" ⊃ "peanut", but "shellfish" ⊅ "fish" and "peanut" ⊅ "nut"
+  const has = (x: string, y: string) => ` ${x} `.includes(` ${y} `);
+  if (a === b || has(a, b) || has(b, a)) return true;
   return (SYNONYMS[a] ?? []).some(s => stem(s) === b) || (SYNONYMS[b] ?? []).some(s => stem(s) === a);
 }
 

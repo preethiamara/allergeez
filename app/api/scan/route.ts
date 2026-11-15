@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { detectAdditives, detectNaturalTriggers, matchesUserList } from "@/lib/additives";
-import { allergenMatches } from "@/lib/allergens";
+import { allergenMatches, allergyGroup } from "@/lib/allergens";
 
 // gemini-2.5-flash is no longer available to new API keys, so try current models in order.
 // Override with GEMINI_MODEL in .env.local if needed.
@@ -55,6 +55,7 @@ List common major allergens it likely contains even if the user did not list the
 List every food additive separately in "additives" (preservatives, colorings, sweeteners, flavor enhancers, thickeners, emulsifiers), with the common name, the group, and the E-number if known. For labels, include every additive printed; for dishes, only ones very likely present (e.g. sulfites in wine, nitrites in bacon). Keep additives in "ingredients" too, exactly as printed.
 List "natural_triggers": compounds the food is naturally high in that some people react to by eating ("histamine", "nickel", "salicylates", "tyramine"), with the foods responsible. Only include clear cases.
 The user's allergens can include additives or natural compounds (e.g. "sulfites", "red dye 40", "msg", "histamine", "nickel"): flag those too, matching label names and E-numbers (e.g. sodium metabisulfite / E223 → sulfites, Allura Red / E129 → red dye 40, E621 → msg).
+For "menu", read the dishes off the menu into "menu_items" (up to 30, names as printed). For each dish list the major allergens it likely contains in "contains" (lowercase, e.g. "dairy", "wheat", "peanut", "tree nut", "egg", "soy", "sesame", "shellfish", "fish", plus any of the user's allergens), counting typical hidden ingredients (pesto → tree nut, satay → peanut, aioli → egg), and cross-contact risks like a shared fryer in "may_contain". For menus leave "ingredients" and "flags" empty. For every other kind, "menu_items" is [].
 For "homemade" and "restaurant", estimate nutrition for the portion shown in "nutrition_estimate" (numbers only; null if you can't tell). For other kinds set "nutrition_estimate" to null.
 
 Return JSON only:
@@ -64,6 +65,7 @@ Return JSON only:
  "common_allergens": string[],
  "additives": [{"name": string, "group": string, "e": string}],
  "natural_triggers": [{"trigger": string, "foods": string[]}],
+ "menu_items": [{"dish": string, "contains": string[], "may_contain": string[]}],
  "nutrition_estimate": {"portion": string, "kcal": number, "protein": number, "carbs": number, "fat": number, "sugars": number, "fiber": number, "sodiumMg": number} | null,
  "safe": boolean, "note": string (one friendly sentence)}
 If the input is not food or is unreadable, use kind "not_food", name "", empty lists, safe false, and in note say briefly what it is instead (for a photo: "This looks like a laptop keyboard."; for text: "Car keys aren’t food.").
@@ -93,6 +95,15 @@ If unsure, set safe to false. Informational only, not medical advice.${descripti
           return detectNaturalTriggers([ing]).some(t => t.trigger === trig)
             || geminiTriggerFoods.some(t => String(t.trigger).toLowerCase() === trig && (t.foods ?? []).some(fd => ingL.includes(String(fd).toLowerCase()) || String(fd).toLowerCase().includes(ingL)));
         });
+        // Menus: check every dish against the user's list ourselves (never trust the model's verdict)
+        const clean = (x: unknown) => (Array.isArray(x) ? x : []).map(v => String(v).trim().toLowerCase()).filter(Boolean).slice(0, 12);
+        result.menu_items = result.kind === "menu" ? (Array.isArray(out.menu_items) ? out.menu_items : []).slice(0, 30).map((m: any) => {
+          const contains = clean(m?.contains), mayContain = clean(m?.may_contain);
+          // Same allergen, or the same allergy group ("shellfish" ↔ "shrimp", "tree nuts" ↔ "pesto's pine nuts")
+          const hit = (a: string) => list.some(p => allergenMatches(p, a) || allergyGroup(p) === allergyGroup(a)) || matchesUserList(list, { name: a });
+          return { dish: String(m?.dish ?? "").trim().slice(0, 80), contains, may_contain: mayContain,
+            yours: contains.filter(hit), yours_maybe: mayContain.filter(hit) };
+        }).filter((m: any) => m.dish) : [];
         // Not food: nothing to analyze or save; the app asks for another photo
         if (result.kind === "not_food") {
           return Response.json({ ...result, name: "", product: null, barcode: "", ingredients: [], flags: [], common_allergens: [],

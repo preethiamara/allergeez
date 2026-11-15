@@ -2,8 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Ingredient, Meal, Profile, Reaction } from "@/lib/records";
 import type { SessionUser } from "@/lib/auth/server";
-import { AppHeader, Buddy, BuddyInBowl, Icon, SafetyHeart, type SafetyStatus } from "./ui";
-import ProfileScreen, { initialsOf } from "./ProfileScreen";
+import { AppHeader, Buddy, BuddyInBowl, Icon, SafetyHeart, SketchFilter, type SafetyStatus } from "./ui";
+import ProfileScreen from "./ProfileScreen";
 import IngredientModal from "./IngredientModal";
 import Emergency, { unlockEmergencyAudio } from "./Emergency";
 import CameraCapture from "./CameraCapture";
@@ -27,6 +27,7 @@ type ScanResult = {
   product?: { brand?: string; name?: string } | null; barcode?: string;
   nutrition_estimate?: NutritionEstimate | null;
   additives?: Additive[]; natural_triggers?: NaturalTrigger[];
+  menu_items?: { dish: string; contains: string[]; may_contain: string[]; yours: string[]; yours_maybe: string[] }[];
   common_allergens?: string[]; safe?: boolean; note?: string;
 };
 
@@ -778,6 +779,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
   // ---------- render ----------
   return (
     <div className="site-shell">
+      <SketchFilter />
       <div className="ambient ambient--one" />
       <div className="ambient ambient--two" />
       <main className="app-frame">
@@ -785,9 +787,6 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
           <div className="screen home-screen">
             <header className="home-topbar">
               <div className="brand"><Buddy small /><span>allergeez</span></div>
-              <button className="avatar" aria-label={user ? "Open your profile" : "Sign in or open profile"} onClick={() => go("profile")}>
-                {user?.image ? <img src={user.image} alt="" referrerPolicy="no-referrer" /> : user ? initialsOf(user) : <Icon name="user" size={20} />}
-              </button>
             </header>
             <section className="welcome">
               <div className="welcome__copy">
@@ -801,7 +800,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             </section>
             <section className="action-grid" aria-label="Main actions">
               <button className="emergency-button emergency-button--home" onClick={openEmergency}>
-                <span className="emergency-button__icon"><Icon name="alert" size={24} /></span>
+                <span className="emergency-button__icon"><Icon name="sos" size={44} /></span>
                 <span className="emergency-button__copy"><strong>Emergency help</strong><small>For severe symptoms</small></span>
                 <Icon name="arrow" />
               </button>
@@ -827,6 +826,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               <button onClick={() => go("history")}><Icon name="history" /><span>Meal history</span></button>
               <button onClick={() => go("reaction-history")}><Icon name="medical" /><span>Reaction history</span></button>
               <button onClick={() => go("allergens")}><Icon name="shield" /><span>Allergens</span></button>
+              <button onClick={() => go("profile")}><Icon name="profile" /><span>Profile</span></button>
             </nav>
           </div>
         )}
@@ -847,7 +847,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               </button>
               <button onClick={() => setCameraFor("meal")}>
                 <span className="option-icon option-icon--peach"><Icon name="camera" size={27} /></span>
-                <span><strong>Take a photo</strong><small>Snap your meal or a label now</small></span>
+                <span><strong>Take a photo</strong><small>Snap your meal now</small></span>
                 <Icon name="chevron" size={20} />
               </button>
               <button onClick={() => go("describe")}>
@@ -939,7 +939,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               <p><strong>Not sure what to include?</strong><br />Think about toppings, drinks, snacks, and sauces too.</p>
             </div>
             <button className="primary-button" disabled={!desc.trim() && selectedFoods.length === 0} onClick={reviewDescription}>
-              Review with my AI buddy <Icon name="arrow" size={20} />
+              Review with my GEE! <Icon name="arrow" size={20} />
             </button>
           </div>
         )}
@@ -952,7 +952,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                 <div className="success-state__mark"><Icon name="check" size={35} strokeWidth={2.4} /></div>
                 <p className="eyebrow">All saved</p>
                 <h2>Food logged. Delicious!</h2>
-                <p>That’s one more clue to help us understand what makes you feel your best.</p>
+                <p>That’s one more clue to help us understand what makes you feel your best!</p>
                 <BuddyInBowl />
                 <button className="primary-button" onClick={resetMeal}>Back to home</button>
                 <button className="text-button" onClick={() => go("history")}>View food history</button>
@@ -961,7 +961,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               <>
                 <section className="page-intro page-intro--compact">
                   <p className="eyebrow">You’re almost done</p>
-                  <h2>{scan.loading ? "Gee is taking a look…" : "Here’s what I picked up"}</h2>
+                  <h2>{scan.loading ? "Gee is taking a look…" : "Food Information!"}</h2>
                   <p>You can make changes before adding this to your food history.</p>
                 </section>
                 {photo && <img className="meal-preview" src={photo} alt="The meal you selected" />}
@@ -1112,7 +1112,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               ))}
             </div>
             {meals.length === 0 && (
-              <div className="empty-state"><Buddy /><h3>Your log is ready</h3><p>Add a meal whenever you feel ready.</p></div>
+              <div className="empty-state"><Buddy variant="starry" /><h3>Your log is ready</h3><p>GEE is waiting to munch with you!</p></div>
             )}
           </div>
         )}
@@ -1301,7 +1301,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             <AppHeader title="Reaction details" onBack={() => go("home")} onEmergency={openEmergency} />
             <section className="page-intro page-intro--compact reaction-form-intro">
               <div>
-                <p className="eyebrow">Take your time</p>
+                <p className="eyebrow">Oh no!</p>
                 <h2>What are you feeling?</h2>
                 <p>Share what you notice. You don’t need to use medical words.</p>
               </div>
@@ -1334,7 +1334,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               </fieldset>
               {severity >= 8 && (
                 <div className="severity-alert">
-                  <Icon name="alert" size={20} />
+                  <Icon name="sos" size={26} />
                   <p>A severe reaction can become an emergency. If you have trouble breathing, throat tightness, faintness, or rapidly worsening symptoms, get emergency help now.</p>
                   <button onClick={openEmergency}>Get help</button>
                 </div>
@@ -1390,8 +1390,8 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             {saved ? (
               <section className="success-state">
                 <div className="success-state__mark"><Icon name="check" size={35} strokeWidth={2.4} /></div>
-                <p className="eyebrow">Reaction saved</p>
-                <h2>You captured something important.</h2>
+                <p className="eyebrow text-center">Don't Worry</p>
+                <h2 className="text-center">GEE’s on his way to keep the allergeez away!</h2>
                 <p>Your details are safely in your history and ready to help reveal patterns.</p>
                 <Buddy variant="boxing" />
                 <button className="primary-button" onClick={() => go("reaction-history")}>View reaction history</button>
@@ -1528,7 +1528,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             <section className="page-intro">
               <p className="eyebrow">Food safety</p>
               <h2>What do you want to eat?</h2>
-              <p>Check ingredients and spot potential allergen triggers before you take a bite. Nothing is saved unless you choose to.</p>
+              <p>Check ingredients and spot potential allergen triggers before you take a bite.</p>
             </section>
             {allergens.length === 0 && (
               <div className="test-note">
@@ -1550,7 +1550,12 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
               </button>
               <button onClick={() => { resetTest(); go("test-describe"); }}>
                 <span className="option-icon option-icon--sage"><Icon name="pen" size={27} /></span>
-                <span><strong>Type it in</strong><small>Describe it or search a brand</small></span>
+                <span><strong>Type it in</strong><small>Describe your food in your own words</small></span>
+                <Icon name="chevron" size={20} />
+              </button>
+              <button onClick={() => testInput.current?.click()}>
+                <span className="option-icon option-icon--yellow"><Icon name="menu" size={27} /></span>
+                <span><strong>Upload a menu</strong><small>Upload a menu to see what you can eat</small></span>
                 <Icon name="chevron" size={20} />
               </button>
             </div>
@@ -1567,7 +1572,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
             <section className="page-intro page-intro--compact">
               <p className="eyebrow">Describe your food</p>
               <h2>What do you want to eat?</h2>
-              <p>Ingredients, sauces, brand names, everything! The more details you add, the better.</p>
+              <p>Ingredients, sauces, brand names everything! The more details you add the better.</p>
             </section>
             <div className="text-card">
               <label htmlFor="test-food-description">Describe what’s on your plate</label>
@@ -1633,7 +1638,49 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                     <p className="allergens-modal-desc">{photoMatch?.loading ? <>Looking up <strong>{photoMatch.label}</strong> in the food database and on the web…</> : "Reading the ingredients."}</p>
                     {photo && <img src={photo} alt="The food you’re testing" className="safety-result-preview-image" />}
                   </div>
-                ) : notFood ? (<>
+                ) : scan.result?.kind === "menu" && !notFood ? (() => {
+                  // Menu: every dish checked against the user's allergens
+                  const items = scan.result?.menu_items ?? [];
+                  const avoid = items.filter(m => m.yours.length), ask = items.filter(m => !m.yours.length && m.yours_maybe.length);
+                  const ok = items.filter(m => !m.yours.length && !m.yours_maybe.length);
+                  const menuPct = items.length ? Math.round((ok.length / items.length) * 100) : 0;
+                  const menuStatus: SafetyStatus = !items.length || !allergens.length ? "caution" : ok.length === 0 ? "warning" : avoid.length || ask.length ? "caution" : "safe";
+                  const groups: [string, string, typeof items][] = [["ok", "Looks OK for you", ok], ["ask", "Ask your server first", ask], ["avoid", "Contains your allergens", avoid]];
+                  return (<>
+                    <SafetyHeart percentage={menuPct} status={menuStatus} />
+                    <div className="safety-popup-header">
+                      <span className={`safety-badge safety-badge--${menuStatus}`}>Menu check</span>
+                      <h3>{items.length ? `${ok.length} of ${items.length} dishes look OK for you` : "Couldn’t read the dishes"}</h3>
+                    </div>
+                    {photo && <img src={photo} alt="Your menu" className="safety-result-preview-image" />}
+                    {!allergens.length && (
+                      <div className="safety-alert-box safety-alert-box--caution"><Icon name="info" size={20} />
+                        <div><strong>No allergens on your list yet</strong><p>Add them so Gee can sort this menu for you. <button className="inline-link" onClick={() => { resetTest(); go("allergens"); }}>Add allergens</button></p></div></div>
+                    )}
+                    {items.length > 0 && (
+                      <div className="menu-check">
+                        {groups.filter(([, , list]) => list.length > 0).map(([key, label, list]) => (
+                          <div key={key} className={`menu-check__group menu-check__group--${key}`}>
+                            <span className="safety-section-title">{label}</span>
+                            {list.map(m => (
+                              <div key={m.dish} className="menu-check__dish">
+                                <strong>{m.dish}</strong>
+                                {key === "avoid" && <small>{m.yours.join(", ")}</small>}
+                                {key === "ask" && <small>may contain {m.yours_maybe.join(", ")}</small>}
+                                {key === "ok" && m.contains.length > 0 && <small>has {m.contains.slice(0, 4).join(", ")}</small>}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {scan.result?.note && <p className="ai-card__note">{scan.result.note}</p>}
+                    <div className="safety-popup-actions">
+                      <button className="secondary-button" onClick={resetTest}>Test another food</button>
+                    </div>
+                    <p className="disclaimer">Read from the menu, not the restaurant’s allergen chart. Always tell your server about your allergy.</p>
+                  </>);
+                })() : notFood ? (<>
                   {photo && <img src={photo} alt="Your photo" className="safety-result-preview-image" />}
                   <NotFoodCard note={scan.result?.note} isPhoto={!!photo}
                     onRetake={() => { resetTest(); setCameraFor("test"); }} onChoose={() => testInput.current?.click()}
@@ -1656,7 +1703,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
                       <div><strong>No allergens on your list yet</strong><p>Add them so Gee can tell you if this is safe for you. <button className="inline-link" onClick={() => { close(); go("allergens"); }}>Add allergens</button></p></div></div>
                   ) : (
                     <div className="safety-alert-box safety-alert-box--safe"><Icon name="check" size={20} />
-                      <div><strong>No flagged allergens detected</strong><p>None of your watchlist allergens were found. Still read the label: recipes change and cross-contact happens.</p></div></div>
+                      <div><strong>No flagged allergens detected</strong><p>None of your watchlist allergens were found in this food.</p></div></div>
                   )}
                   {photoMatch && (
                     <p className={`safety-source ${!photoMatch.exact ? "is-miss" : ""}`}>
@@ -1777,7 +1824,7 @@ export default function AllerGeezApp({ user, initialMeals, initialReactions, ini
           <div className="modal-backdrop" role="presentation" onMouseDown={() => setEmergencyOpen(false)}>
             <section className="emergency-modal" role="dialog" aria-modal="true" aria-labelledby="emergency-title" onMouseDown={e => e.stopPropagation()}>
               <button className="modal-close" onClick={() => setEmergencyOpen(false)} aria-label="Close emergency help"><Icon name="close" /></button>
-              <div className="emergency-modal__icon"><Icon name="alert" size={32} /></div>
+              <div className="emergency-modal__icon"><Icon name="sos" size={66} /></div>
               <p className="eyebrow">Emergency help</p>
               <h2 id="emergency-title">Are you having trouble breathing?</h2>
               <p>If symptoms are severe or getting worse quickly, use your prescribed epinephrine if available and call emergency services now.</p>
